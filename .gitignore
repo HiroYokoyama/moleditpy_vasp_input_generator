@@ -1,0 +1,8 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+dist/
+build/
+*.egg-info/
+vasp_input_generator/settings.json
