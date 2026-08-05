@@ -28,8 +28,20 @@ def bulk_cell():
 
 
 @pytest.fixture
-def slab_cell(bulk_cell):
-    return cm.build_slab(bulk_cell, (0, 0, 1), layers=3, vacuum=15.0)
+def slab_cell():
+    """A slab as it arrives from the Slab Builder: a CIF with a vacuum layer."""
+    lengths, angles = (4.0, 4.0, 20.0), (90.0, 90.0, 90.0)
+    lattice = cm.cell_vectors(lengths, angles)
+    atoms = tuple(
+        cm.CellAtom(
+            f"Cu{index + 1}",
+            "Cu",
+            np.array([0.0, 0.0, height / 20.0]),
+            np.array([0.0, 0.0, height]),
+        )
+        for index, height in enumerate((0.0, 2.0, 4.0))
+    )
+    return cm.Cell("slab", lengths, angles, lattice, atoms, source="cif")
 
 
 def joined(messages):

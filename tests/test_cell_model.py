@@ -323,3 +323,61 @@ def test_kpoint_mesh_from_density():
     cell = cm.parse_cif(CUBIC_CIF)  # 4 A cube
     assert cm.kpoint_mesh_from_density(cell, 0.05) == (5, 5, 5)
     assert cm.kpoint_mesh_from_density(cell, 10.0) == (1, 1, 1)
+
+
+# -- slab detection --------------------------------------------------------
+
+
+def _layered_cell(c_length, heights, source="cif"):
+    lengths, angles = (4.0, 4.0, c_length), (90.0, 90.0, 90.0)
+    lattice = cm.cell_vectors(lengths, angles)
+    atoms = tuple(
+        cm.CellAtom(
+            f"Cu{index + 1}",
+            "Cu",
+            np.array([0.0, 0.0, height / c_length]),
+            np.array([0.0, 0.0, height]),
+        )
+        for index, height in enumerate(heights)
+    )
+    return cm.Cell("x", lengths, angles, lattice, atoms, source=source)
+
+
+def test_vacuum_gap_measures_the_empty_space():
+    cell = _layered_cell(20.0, [0.0, 2.0, 4.0])
+    assert cm.vacuum_gap(cell) == pytest.approx(16.0)
+
+
+def test_vacuum_gap_is_zero_for_a_filled_cell():
+    cell = _layered_cell(4.0, [0.0, 2.0, 4.0])
+    assert cm.vacuum_gap(cell) == pytest.approx(0.0)
+
+
+def test_vacuum_gap_handles_an_empty_cell():
+    lengths, angles = (4.0, 4.0, 4.0), (90.0, 90.0, 90.0)
+    empty = cm.Cell("x", lengths, angles, cm.cell_vectors(lengths, angles), ())
+    assert cm.vacuum_gap(empty) == 0.0
+
+
+def test_looks_like_slab_detects_a_cif_borne_slab():
+    """A slab loaded from a CIF has no marker, so geometry must give it away."""
+    assert cm.looks_like_slab(_layered_cell(20.0, [0.0, 2.0, 4.0]))
+
+
+def test_looks_like_slab_rejects_a_dense_bulk_cell():
+    assert not cm.looks_like_slab(_layered_cell(4.0, [0.0, 2.0]))
+
+
+def test_looks_like_slab_honours_the_threshold():
+    cell = _layered_cell(10.0, [0.0, 2.0, 4.0])  # 6 A of vacuum
+    assert cm.looks_like_slab(cell, minimum_vacuum=5.0)
+    assert not cm.looks_like_slab(cell, minimum_vacuum=8.0)
+
+
+def test_looks_like_slab_never_fires_for_a_molecule_box():
+    cell = cm.cell_from_molecule(["H", "H"], [[0, 0, 0], [0, 0, 1.0]], padding=8.0)
+    assert not cm.looks_like_slab(cell)
+
+
+def test_looks_like_slab_trusts_an_explicit_slab_source():
+    assert cm.looks_like_slab(_layered_cell(4.0, [0.0, 2.0], source="slab"))

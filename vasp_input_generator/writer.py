@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from . import potentials
-from .cell_model import Cell, kpoint_mesh_from_density, sorted_by_species
+from .cell_model import Cell, kpoint_mesh_from_density, looks_like_slab, sorted_by_species
 
 TASKS = (
     "Single point (SCF)",
@@ -335,6 +335,12 @@ def validate(cell: Cell, settings: Optional[Dict] = None, net_charge: int = 0) -
 
     mesh = _effective_mesh(cell, settings)
     is_molecule = cell.source == "molecule"
+    is_slab = looks_like_slab(cell)
+
+    if is_slab and mesh[2] > 1:
+        messages.append(
+            "The slab is sampled along the vacuum direction; set the third k-point to 1."
+        )
 
     if is_molecule and max(mesh) > 1:
         messages.append(
