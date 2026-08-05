@@ -6,7 +6,7 @@ import os
 from PyQt6.QtWidgets import QMessageBox
 
 PLUGIN_NAME = "VASP Input Generator"
-PLUGIN_VERSION = "0.1.0"
+PLUGIN_VERSION = "0.2.0"
 PLUGIN_AUTHOR = "HiroYokoyama"
 PLUGIN_DESCRIPTION = (
     "Generate VASP POSCAR/INCAR/KPOINTS inputs from the current molecule "
@@ -14,7 +14,7 @@ PLUGIN_DESCRIPTION = (
     "recommended PAW potential hints."
 )
 PLUGIN_CATEGORY = "Export"
-PLUGIN_TAGS = ["vasp", "periodic", "dft", "solid-state", "input"]
+PLUGIN_TAGS = ["DFT", "Generator"]
 PLUGIN_DEPENDENCIES = ["numpy"]
 PLUGIN_SUPPORTED_MOLEDITPY_VERSION = ">=4.0.0, <5.0.0"
 

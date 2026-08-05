@@ -13,6 +13,12 @@ structure, with a live preview of every file before you save.
   - the structure already open in the **CIF Viewer** plugin panel, copied across
     without re-reading the file
 - **Supercells** — independent a/b/c repeats applied to any source
+- **Surface slab builder** — cut any (hkl) surface from a bulk structure: layers,
+  vacuum thickness, a termination shift that slides the cut window through the
+  cell, and an option to put **c** along the surface normal. Hexagonal
+  Miller-Bravais indices `(hkil)` are accepted and folded to `(hkl)`
+- **Vacuum per axis** — pad one axis only (the usual slab setup) instead of a
+  uniform box
 - **Task presets** — single point, ionic relaxation, ionic + cell relaxation,
   DOS, non-SCF band structure, NVT molecular dynamics
 - **INCAR control** — functional (PBE / PBEsol / RPBE / LDA), ENCUT, EDIFF/EDIFFG,
@@ -25,6 +31,12 @@ structure, with a live preview of every file before you save.
 - **POTCAR hint** — a ready-to-run `cat` command using the VASP *recommended*
   PAW set, in the same element order as the POSCAR (POTCAR files themselves are
   licensed VASP data and are never generated)
+
+- **Checks** — a warning strip flags the classic mistakes: a molecule sampled
+  with a dense k-mesh, k-points across a slab's vacuum, too little vacuum,
+  cut-offs that are too low, a relaxation with zero steps, and charged cells
+
+- **Charged systems** are detected from the molecule and flagged with the NELECT hint
 
 ## Install
 
@@ -63,4 +75,4 @@ python -m pytest tests/ -v
 
 ## Licence
 
-MIT — see [LICENSE](LICENSE).
+GNU General Public License v3.0 — see [LICENSE](LICENSE).

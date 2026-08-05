@@ -19,8 +19,8 @@ from test_cell_model import CUBIC_CIF, _FakeMol  # noqa: E402
 @pytest.mark.parametrize(
     "module,name,version",
     [
-        (cm, "periodic-cell-model", "0.1.0"),
-        (sp, "periodic-structure-panel", "0.1.0"),
+        (cm, "periodic-cell-model", "0.3.0"),
+        (sp, "periodic-structure-panel", "0.3.0"),
         (__import__("vasp_input_generator.elements", fromlist=["x"]), "periodic-elements", "0.1.0"),
     ],
 )
@@ -254,10 +254,19 @@ def test_panel_settings_roundtrip(panel):
     settings = {
         "structure_source": sp.SOURCE_CIF,
         "padding": 8.5,
+        "per_axis_padding": True,
+        "padding_axes": [1.0, 2.0, 12.0],
         "cubic_box": True,
         "cif_path": panel._cif_path,
         "expand_symmetry": False,
         "supercell": [2, 3, 4],
+        "slab_enabled": True,
+        "miller": [1, 0, 1],
+        "miller_four_index": False,
+        "slab_layers": 4,
+        "slab_vacuum": 12.5,
+        "slab_shift": 0.25,
+        "slab_orthogonal_c": False,
     }
     panel.apply_settings(settings)
     assert panel.read_settings() == settings

@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 
+from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QCheckBox,
@@ -53,6 +54,8 @@ class VaspInputDialog(QDialog):
         self.mark_modified = mark_modified
         self._updating = False
         self._cell = None
+        self._net_charge = 0
+        self._get_molecule = get_molecule
 
         layout = QVBoxLayout(self)
         self.tabs = QTabWidget()
@@ -75,6 +78,13 @@ class VaspInputDialog(QDialog):
         self.preview.setReadOnly(True)
         self.preview.setFont(QFont("Courier New", 9))
         self.tabs.addTab(self.preview, "Preview")
+
+        self.warning_label = QLabel()
+        self.warning_label.setWordWrap(True)
+        self.warning_label.setTextFormat(Qt.TextFormat.RichText)
+        self.warning_label.setStyleSheet("QLabel { color: #b36b00; }")
+        self.warning_label.setVisible(False)
+        layout.addWidget(self.warning_label)
 
         buttons = QDialogButtonBox()
         self.save_button = buttons.addButton("Save Files...", QDialogButtonBox.ButtonRole.AcceptRole)
@@ -391,12 +401,35 @@ class VaspInputDialog(QDialog):
             self._cell = None
             self.structure_panel.refresh_summary(error=str(exc))
             self.preview.setPlainText(f"! {exc}")
+            self._show_warnings([])
             self.save_button.setEnabled(False)
             return
 
+        self._net_charge = self._molecule_charge()
         self.structure_panel.refresh_summary(self._cell)
         self.preview.setPlainText(writer.build_preview(self._cell, settings))
+        self._show_warnings(writer.validate(self._cell, settings, net_charge=self._net_charge))
         self.save_button.setEnabled(True)
+
+    def _molecule_charge(self) -> int:
+        """Net formal charge of the molecule, for the charged-cell warning."""
+        if self._cell is None or self._cell.source != "molecule" or self._get_molecule is None:
+            return 0
+        from .cell_model import molecule_charge_and_multiplicity
+
+        try:
+            return molecule_charge_and_multiplicity(self._get_molecule())[0]
+        except (ValueError, AttributeError, TypeError):
+            return 0
+
+    def _show_warnings(self, messages) -> None:
+        if not messages:
+            self.warning_label.setVisible(False)
+            self.warning_label.clear()
+            return
+        items = "".join(f"<li>{message}</li>" for message in messages)
+        self.warning_label.setText(f"<b>Check:</b><ul>{items}</ul>")
+        self.warning_label.setVisible(True)
 
     def copy_preview(self) -> None:
         from PyQt6.QtWidgets import QApplication

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Sequence
+from typing import Dict, List, Optional, Sequence, Tuple
 
 from . import potentials
 from .cell_model import Cell, kpoint_mesh_from_density, sorted_by_species
@@ -321,3 +321,100 @@ def build_preview(cell: Cell, settings: Optional[Dict] = None) -> str:
     for name in ("INCAR", "KPOINTS", "POSCAR", "POTCAR.readme"):
         chunks.append(f"{'=' * 28} {name} {'=' * 28}\n{files[name]}")
     return "\n".join(chunks)
+
+
+# --------------------------------------------------------------------------
+# validation
+# --------------------------------------------------------------------------
+
+
+def validate(cell: Cell, settings: Optional[Dict] = None, net_charge: int = 0) -> List[str]:
+    """Warnings about setups that run but give wrong or wasteful answers."""
+    settings = {**default_settings(), **(settings or {})}
+    messages: List[str] = []
+
+    mesh = _effective_mesh(cell, settings)
+    is_molecule = cell.source == "molecule"
+
+    if is_molecule and max(mesh) > 1:
+        messages.append(
+            f"An isolated molecule in a box is being sampled with a {mesh[0]}x{mesh[1]}x{mesh[2]} "
+            "k-mesh — Gamma-only is enough and much cheaper."
+        )
+
+    ismear = _smearing_tags(settings)[0][1]
+    if ismear == -5 and (mesh[0] * mesh[1] * mesh[2]) < 4:
+        messages.append(
+            "The tetrahedron method (ISMEAR=-5) needs a real k-mesh; it is unreliable "
+            "with fewer than about 4 k-points."
+        )
+    if ismear == 1 and float(settings.get("sigma", 0.05)) > 0.2:
+        messages.append(
+            f"SIGMA={settings.get('sigma')} eV is large for Methfessel-Paxton; check that the "
+            "entropy term T*S in OUTCAR stays below ~1 meV/atom."
+        )
+    if is_molecule and ismear not in (0, -1):
+        messages.append(
+            "A molecule has discrete levels — Gaussian (ISMEAR=0) with a small SIGMA is the "
+            "safe choice; MP or tetrahedron smearing is for metals."
+        )
+
+    task = settings.get("task", TASKS[0])
+    if task.startswith("Relax") and int(settings.get("nsw", 100)) < 1:
+        messages.append("A relaxation with NSW=0 performs a single point calculation only.")
+    if task == "Band structure (non-SCF)":
+        messages.append(
+            "ICHARG=11 reads CHGCAR from a previous SCF run — copy it in, and replace the "
+            "automatic mesh with an explicit k-path for the band structure."
+        )
+
+    if float(settings.get("encut", 520.0)) < 300.0:
+        messages.append(
+            f"ENCUT={settings.get('encut')} eV is low; use at least 1.3x the largest ENMAX in "
+            "your POTCARs (typically 400-520 eV)."
+        )
+    if task == "Relax ions + cell" and float(settings.get("encut", 520.0)) < 600.0:
+        messages.append(
+            "A variable-cell relaxation suffers Pulay stress — raise ENCUT by ~30% or re-relax "
+            "at the final volume."
+        )
+
+    if settings.get("selective_dynamics") and not settings.get("frozen_indices"):
+        messages.append(
+            "Selective dynamics is on but nothing is selected in MoleditPy, so every atom is free."
+        )
+
+    if net_charge:
+        messages.append(
+            f"The molecule carries a net charge of {net_charge:+d}. VASP neutralises the cell with "
+            "a uniform background, so set NELECT (neutral value - charge) and consider a "
+            "monopole correction."
+        )
+
+    if is_molecule:
+        gap = _vacuum_gap(cell, settings)
+        if gap is not None and gap < 8.0:
+            messages.append(
+                f"Only {gap:.1f} A of vacuum separates periodic images; 10-15 A is usual for a "
+                "molecule (more if it is charged or strongly polar)."
+            )
+
+    return messages
+
+
+def _effective_mesh(cell: Cell, settings: Dict) -> Tuple[int, int, int]:
+    mode = settings.get("kpoint_mode", KPOINT_MODES[1])
+    if mode == "Gamma-only":
+        return (1, 1, 1)
+    if mode == "Automatic (spacing)":
+        return kpoint_mesh_from_density(cell, float(settings.get("kspacing", 0.03)))
+    return tuple(max(1, int(value)) for value in settings.get("kmesh", [4, 4, 4]))
+
+
+def _vacuum_gap(cell: Cell, settings: Dict) -> Optional[float]:
+    """Smallest image-to-image separation implied by the padding settings."""
+    if settings.get("per_axis_padding"):
+        pads = [float(value) for value in settings.get("padding_axes") or []]
+        return 2.0 * min(pads) if len(pads) == 3 else None
+    padding = settings.get("padding")
+    return 2.0 * float(padding) if padding is not None else None
