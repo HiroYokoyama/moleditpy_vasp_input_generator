@@ -6,7 +6,7 @@ import os
 from PyQt6.QtWidgets import QMessageBox
 
 PLUGIN_NAME = "VASP Input Generator"
-PLUGIN_VERSION = "0.3.0"
+PLUGIN_VERSION = "0.3.1"
 PLUGIN_AUTHOR = "HiroYokoyama"
 PLUGIN_DESCRIPTION = (
     "Generate VASP POSCAR/INCAR/KPOINTS inputs from the current molecule "
@@ -35,7 +35,13 @@ def get_default_settings():
 current_settings = get_default_settings()
 
 
-def run(mw):
+def _open_dialog(mw):
+    """Open the dialog.
+
+    Deliberately NOT named ``run``: the host auto-adds a Plugins-menu entry for
+    any module exposing ``run()``, which would duplicate the entry registered in
+    initialize() below.
+    """
     global _dialog_opened
 
     if _context is not None:
@@ -97,7 +103,7 @@ def initialize(context):
     _context = context
 
     def show_dialog():
-        run(context.get_main_window())
+        _open_dialog(context.get_main_window())
 
     context.add_export_action("VASP Input (POSCAR/INCAR)...", show_dialog)
 

@@ -65,7 +65,7 @@ def context():
 
 def test_plugin_metadata():
     assert plugin.PLUGIN_NAME == "VASP Input Generator"
-    assert plugin.PLUGIN_VERSION == "0.3.0"
+    assert plugin.PLUGIN_VERSION == "0.3.1"
     assert plugin.PLUGIN_AUTHOR == "HiroYokoyama"
     assert plugin.PLUGIN_CATEGORY == "Export"
     assert plugin.PLUGIN_DEPENDENCIES == ["numpy"]
@@ -85,6 +85,23 @@ def test_default_settings_shape():
     settings = plugin.get_default_settings()
     for key in ("task", "encut", "kpoint_mode", "coord_mode", "supercell"):
         assert key in settings
+
+
+def test_module_has_no_run_attribute():
+    """A module-level run() makes the host add its own Plugins-menu entry.
+
+    The host does this for any module exposing `run` (ui/plugin_menu_manager.py),
+    so keeping one alongside the entry registered in initialize() would show the
+    plugin twice.
+    """
+    assert not hasattr(plugin, "run"), (
+        "rename run() to something private, or the plugin appears twice in the menus"
+    )
+
+
+def test_module_has_no_autorun_attribute():
+    """autorun() executes at startup; this plugin has nothing to do there."""
+    assert not hasattr(plugin, "autorun")
 
 
 # -- registration ----------------------------------------------------------
