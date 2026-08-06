@@ -20,7 +20,7 @@ from test_cell_model import CUBIC_CIF, _FakeMol  # noqa: E402
     "module,name,version",
     [
         (cm, "periodic-cell-model", "0.7.0"),
-        (sp, "periodic-structure-panel", "0.5.0"),
+        (sp, "periodic-structure-panel", "0.6.0"),
         (__import__("vasp_input_generator.elements", fromlist=["x"]), "periodic-elements", "0.1.0"),
     ],
 )
@@ -260,6 +260,7 @@ def test_panel_settings_roundtrip(panel):
         "cif_path": panel._cif_path,
         "expand_symmetry": False,
         "primitive_cell": True,
+        "auto_preview_3d": False,
         "supercell": [2, 3, 4],
     }
     panel.apply_settings(settings)
@@ -291,3 +292,98 @@ def test_panel_summary_labels_viewer_source(panel):
     panel.source_combo.setCurrentText(sp.SOURCE_VIEWER)
     panel.refresh_summary(panel.build_cell())
     assert "CIF Viewer" in panel.viewer_label.text()
+
+
+# -- automatic 3D preview ---------------------------------------------------
+
+
+class _RecordingPlotter:
+    def __init__(self):
+        self.lines = []
+
+    def add_lines(self, points, color=None, width=None, name=None):
+        self.lines.append(name)
+
+    def add_point_labels(self, *args, **kwargs):
+        pass
+
+    def remove_actor(self, name):
+        pass
+
+    def render(self):
+        pass
+
+
+class _RecordingContext:
+    def __init__(self):
+        self.plotter = _RecordingPlotter()
+        self.current_molecule = None
+        self.shown = 0
+
+    def get_main_window(self):
+        return None
+
+    def reset_3d_camera(self):
+        self.shown += 1
+
+
+@pytest.fixture
+def preview_panel(qapp, tmp_path):
+    path = tmp_path / "auto.cif"
+    path.write_text(CUBIC_CIF, encoding="utf-8")
+    context = _RecordingContext()
+    panel = sp.StructurePanel(context=context)
+    panel.source_combo.setCurrentText(sp.SOURCE_CIF)
+    panel.cif_edit.setText(str(path))
+    yield panel, context
+    panel.deleteLater()
+
+
+def test_a_loaded_cif_is_shown_without_being_asked(preview_panel):
+    pytest.importorskip("rdkit")
+    panel, context = preview_panel
+    panel.refresh_summary(panel.build_cell())
+    assert context.current_molecule is not None
+    assert context.shown == 1
+
+
+def test_the_same_structure_is_not_redrawn(preview_panel):
+    """Changing a k-mesh must not repaint the 3D view on every keystroke."""
+    pytest.importorskip("rdkit")
+    panel, context = preview_panel
+    for _ in range(3):
+        panel.refresh_summary(panel.build_cell())
+    assert context.shown == 1
+
+
+def test_a_changed_structure_is_redrawn(preview_panel):
+    pytest.importorskip("rdkit")
+    panel, context = preview_panel
+    panel.refresh_summary(panel.build_cell())
+    panel.repeat_spins[0].setValue(2)
+    panel.refresh_summary(panel.build_cell())
+    assert context.shown == 2
+
+
+def test_auto_preview_can_be_switched_off(preview_panel):
+    panel, context = preview_panel
+    panel.auto_preview_check.setChecked(False)
+    panel.refresh_summary(panel.build_cell())
+    assert context.current_molecule is None
+
+
+def test_a_molecule_box_is_not_auto_previewed(qapp):
+    """Only a crystal arriving from a file counts as 'loaded'."""
+    context = _RecordingContext()
+    panel = sp.StructurePanel(get_molecule=lambda: _FakeMol(["H"], [[0.0, 0.0, 0.0]]), context=context)
+    panel.source_combo.setCurrentText(sp.SOURCE_MOLECULE)
+    panel.refresh_summary(panel.build_cell())
+    assert context.current_molecule is None
+    panel.deleteLater()
+
+
+def test_auto_preview_stays_silent_when_the_viewer_is_missing(preview_panel):
+    """It was not something the user clicked, so it must not pop a dialog."""
+    panel, _ = preview_panel
+    panel.context = None
+    panel.refresh_summary(panel.build_cell())

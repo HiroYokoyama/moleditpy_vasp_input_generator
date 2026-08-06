@@ -16,7 +16,7 @@ import logging
 import os
 
 SHARED_MODULE_NAME = "periodic-structure-panel"
-SHARED_MODULE_VERSION = "0.5.0"
+SHARED_MODULE_VERSION = "0.6.0"
 
 from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import (
@@ -111,6 +111,7 @@ class StructurePanel(QWidget):
         self.context = context
         self._last_error = ""
         self._preview_actors = []
+        self._auto_previewed_key = None
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -213,8 +214,15 @@ class StructurePanel(QWidget):
         self.clear_preview_button = QPushButton("Clear box")
         self.clear_preview_button.setToolTip("Remove the cell box from the 3D view.")
         self.clear_preview_button.clicked.connect(self.clear_3d_preview)
+        self.auto_preview_check = QCheckBox("Show automatically when a CIF is loaded")
+        self.auto_preview_check.setChecked(True)
+        self.auto_preview_check.setToolTip(
+            "Draw the structure as soon as a CIF file (or the CIF Viewer panel) is read.\n"
+            "Only a new structure triggers it, not every settings change."
+        )
         preview_layout.addWidget(self.preview_button)
         preview_layout.addWidget(self.clear_preview_button)
+        preview_layout.addWidget(self.auto_preview_check)
         preview_layout.addStretch(1)
         layout.addWidget(preview_row)
 
@@ -249,6 +257,7 @@ class StructurePanel(QWidget):
             "cif_path": self.cif_edit.text(),
             "expand_symmetry": self.expand_check.isChecked(),
             "primitive_cell": self.primitive_check.isChecked(),
+            "auto_preview_3d": self.auto_preview_check.isChecked(),
             "supercell": [spin.value() for spin in self.repeat_spins],
         }
 
@@ -264,6 +273,7 @@ class StructurePanel(QWidget):
         self.cif_edit.setText(str(settings.get("cif_path", "") or ""))
         self.expand_check.setChecked(bool(settings.get("expand_symmetry", True)))
         self.primitive_check.setChecked(bool(settings.get("primitive_cell", False)))
+        self.auto_preview_check.setChecked(bool(settings.get("auto_preview_3d", True)))
         repeats = settings.get("supercell") or [1, 1, 1]
         for spin, value in zip(self.repeat_spins, repeats):
             spin.setValue(max(1, int(value)))
@@ -315,6 +325,10 @@ class StructurePanel(QWidget):
             return
         from .cell_model import formula
 
+        # Every dialog calls this after a successful build, which makes it the
+        # one place that sees a new structure arrive.
+        self.auto_preview(cell)
+
         if cell.source == "cif_viewer":
             self.viewer_label.setText(f"Copied from the CIF Viewer panel: <b>{cell.name}</b>")
         a, b, c = cell.lengths
@@ -338,7 +352,30 @@ class StructurePanel(QWidget):
         except (ValueError, OSError, AttributeError, ImportError, RuntimeError) as exc:
             QMessageBox.warning(self, "3D preview", str(exc))
             return
+        self._auto_previewed_key = None
         self.previewed.emit()
+
+    def auto_preview(self, cell) -> None:
+        """Show a newly loaded crystal without being asked.
+
+        Fires only when the structure itself changes, so tweaking a k-mesh or a
+        supercell does not redraw the 3D view on every keystroke.  Failures stay
+        silent: this was not something the user clicked.
+        """
+        if cell is None or not self.auto_preview_check.isChecked():
+            return
+        if cell.source not in ("cif", "cif_viewer"):
+            return
+        key = (cell.name, cell.source, len(cell.atoms), tuple(round(v, 6) for v in cell.lengths))
+        if key == self._auto_previewed_key:
+            return
+        self._auto_previewed_key = key
+        try:
+            self._preview_actors = cell_preview.show_cell(
+                self.context, cell, self._preview_actors
+            )
+        except (ValueError, OSError, AttributeError, ImportError, RuntimeError) as exc:
+            logging.debug("Automatic 3D preview skipped: %s", exc)
 
     def clear_3d_preview(self) -> None:
         """Remove the cell box.  Safe to call when nothing was drawn."""
