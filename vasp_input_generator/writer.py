@@ -98,7 +98,7 @@ def build_poscar(cell: Cell, settings: Optional[Dict] = None) -> str:
     lines.append("  " + "  ".join(f"{count:>4d}" for _, count in counts))
 
     selective = bool(settings.get("selective_dynamics"))
-    frozen = set(int(index) for index in settings.get("frozen_indices") or [])
+    frozen = frozen_cell_indices(cell, settings)
     if selective:
         lines.append("Selective dynamics")
 
@@ -127,6 +127,32 @@ def _species_indices(cell: Cell):
     from .cell_model import group_by_species
 
     return group_by_species(cell)
+
+
+def frozen_cell_indices(cell: Cell, settings: Dict) -> set:
+    """Cell indices to freeze, mapped from the MoleditPy atom selection.
+
+    The selection numbers atoms in the molecule, so it only means anything for a
+    molecule-sourced cell — against a CIF it would freeze whichever sites happen
+    to share those numbers.  In a supercell each selected atom recurs once per
+    image, and every image must be frozen or the copies drift apart.
+    """
+    if not settings.get("selective_dynamics"):
+        return set()
+    selected = {int(index) for index in settings.get("frozen_indices") or []}
+    if not selected or cell.source != "molecule":
+        return set()
+
+    repeats = [max(1, int(value)) for value in settings.get("supercell") or [1, 1, 1]]
+    images = repeats[0] * repeats[1] * repeats[2]
+    count = len(cell.atoms)
+    if images <= 1 or count % images:
+        return {index for index in selected if 0 <= index < count}
+
+    original = count // images
+    return {
+        index for index in range(count) if (index % original) in selected
+    }
 
 
 # --------------------------------------------------------------------------
@@ -392,10 +418,18 @@ def validate(cell: Cell, settings: Optional[Dict] = None, net_charge: int = 0) -
             "at the final volume."
         )
 
-    if settings.get("selective_dynamics") and not settings.get("frozen_indices"):
-        messages.append(
-            "Selective dynamics is on but nothing is selected in MoleditPy, so every atom is free."
-        )
+    if settings.get("selective_dynamics"):
+        if not settings.get("frozen_indices"):
+            messages.append(
+                "Selective dynamics is on but nothing is selected in MoleditPy, so every atom "
+                "is free."
+            )
+        elif not is_molecule:
+            messages.append(
+                "Selective dynamics numbers atoms by the MoleditPy selection, which does not "
+                "correspond to a cell built from a CIF — nothing is frozen. Freeze a slab by "
+                "editing the T/F flags in POSCAR."
+            )
 
     if net_charge:
         messages.append(

@@ -8,6 +8,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from vasp_input_generator import cell_model as cm  # noqa: E402
 from vasp_input_generator import potentials, writer  # noqa: E402
 
+from test_cell_model import CUBIC_CIF  # noqa: E402
+
 
 @pytest.fixture
 def water_cell():
@@ -294,3 +296,39 @@ def test_default_settings_are_independent_copies():
     first = writer.default_settings()
     first["encut"] = 1.0
     assert writer.default_settings()["encut"] == 520.0
+
+
+# -- selective dynamics -----------------------------------------------------
+
+
+def _flags(text):
+    lines = [line for line in text.splitlines() if line.strip().endswith(("F", "T"))
+             or "! " in line]
+    return [("F" if "F   F   F" in line else "T") for line in lines if "!" in line]
+
+
+def test_selective_dynamics_freezes_the_selected_atom(water_cell):
+    text = writer.build_poscar(
+        water_cell, {"selective_dynamics": True, "frozen_indices": [0]}
+    )
+    assert _flags(text) == ["F", "T", "T"]
+
+
+def test_a_supercell_freezes_every_image_of_a_selected_atom(water_cell):
+    """A frozen atom whose copies stay free would let the images drift apart."""
+    doubled = cm.make_supercell(water_cell, [2, 1, 1])
+    settings = {"selective_dynamics": True, "frozen_indices": [0], "supercell": [2, 1, 1]}
+    assert sorted(writer.frozen_cell_indices(doubled, settings)) == [0, 3]
+    assert _flags(writer.build_poscar(doubled, settings)).count("F") == 2
+
+
+def test_a_cif_cell_ignores_the_molecule_selection():
+    """Selection indices number the molecule, not an arbitrary crystal's sites."""
+    cell = cm.parse_cif(CUBIC_CIF)
+    settings = {"selective_dynamics": True, "frozen_indices": [0, 1]}
+    assert writer.frozen_cell_indices(cell, settings) == set()
+    assert any("does not correspond" in message for message in writer.validate(cell, settings))
+
+
+def test_frozen_indices_are_empty_without_selective_dynamics(water_cell):
+    assert writer.frozen_cell_indices(water_cell, {"frozen_indices": [0]}) == set()
