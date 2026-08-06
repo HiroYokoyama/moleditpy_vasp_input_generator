@@ -19,7 +19,7 @@ loudly.
 from __future__ import annotations
 
 SHARED_MODULE_NAME = "periodic-cell-preview"
-SHARED_MODULE_VERSION = "0.1.0"
+SHARED_MODULE_VERSION = "0.2.0"
 
 import logging
 from typing import List, Optional, Sequence
@@ -207,13 +207,29 @@ def draw_cell_box(
     return names
 
 
-def show_cell(context, cell, actor_names: Sequence[str] = (), main_window=None) -> List[str]:
+def show_cell(
+    context,
+    cell,
+    actor_names: Sequence[str] = (),
+    main_window=None,
+    enter_3d: bool = True,
+) -> List[str]:
     """Put the cell in the host's 3D view: atoms first, then the box.
+
+    ``enter_3d`` brings the 3D view to the front, which is what makes the
+    preview visible when the app is sitting in the 2D editor.
 
     Raises ValueError if the cell cannot be shown, so the caller can report it.
     """
     if cell is None or not cell.atoms:
         raise ValueError("There is no structure to preview.")
+    if _plotter(context, main_window) is None:
+        # Without this the atoms are handed over, no box is drawn, and nothing
+        # is said — which looks exactly like the feature being broken.
+        raise ValueError(
+            "MoleditPy's 3D view is not available, so there is nowhere to draw the "
+            "cell. Switch to the 3D viewer and try again."
+        )
 
     molecule = build_molecule(cell)
     if context is not None and hasattr(context, "current_molecule"):
@@ -230,6 +246,14 @@ def show_cell(context, cell, actor_names: Sequence[str] = (), main_window=None) 
         window.draw_molecule_3d(molecule)
 
     names = draw_cell_box(context, cell, actor_names, main_window)
+
+    # Drawing into the 3D view is pointless while the app is showing the 2D
+    # editor, so bring that view to the front.
+    if enter_3d and context is not None and hasattr(context, "enter_3d_viewer_mode"):
+        try:
+            context.enter_3d_viewer_mode()
+        except Exception as exc:  # pragma: no cover - host API guard
+            logging.debug("Could not switch to the 3D viewer: %s", exc)
 
     # The host restores the previous camera after a redraw, so a cell much
     # larger than whatever was on screen before would sit outside the view.

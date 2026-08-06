@@ -14,7 +14,7 @@ from vasp_input_generator import cell_preview as cp  # noqa: E402
 
 def test_shared_module_identity():
     assert cp.SHARED_MODULE_NAME == "periodic-cell-preview"
-    assert cp.SHARED_MODULE_VERSION == "0.1.0"
+    assert cp.SHARED_MODULE_VERSION == "0.2.0"
 
 
 class FakePlotter:
@@ -173,7 +173,8 @@ def test_show_cell_rejects_an_empty_cell():
         cp.show_cell(FakeContext(FakePlotter()), empty)
 
 
-def test_show_cell_rejects_a_missing_viewer(cell):
+def test_show_cell_reports_a_missing_viewer(cell):
+    """Silently drawing nothing is indistinguishable from a broken feature."""
     pytest.importorskip("rdkit")
 
     class Bare:
@@ -181,6 +182,8 @@ def test_show_cell_rejects_a_missing_viewer(cell):
 
     with pytest.raises(ValueError, match="3D view is not available"):
         cp.show_cell(None, cell, main_window=Bare())
+    with pytest.raises(ValueError, match="3D view is not available"):
+        cp.show_cell(FakeContext(None), cell)
 
 
 # -- the molecule must survive the host's renderer ---------------------------
@@ -233,3 +236,36 @@ def test_show_cell_works_without_the_camera_helper(cell):
     pytest.importorskip("rdkit")
     context = FakeContext(FakePlotter())
     assert len(cp.show_cell(context, cell)) == 15
+
+
+# -- switching the app to the 3D view ---------------------------------------
+
+
+class _SwitchingContext(FakeContext):
+    def __init__(self, plotter):
+        super().__init__(plotter)
+        self.entered = 0
+
+    def enter_3d_viewer_mode(self):
+        self.entered += 1
+
+
+def test_show_cell_brings_the_3d_view_to_the_front(cell):
+    """Drawing into a hidden 3D view looks like nothing happened."""
+    pytest.importorskip("rdkit")
+    context = _SwitchingContext(FakePlotter())
+    cp.show_cell(context, cell)
+    assert context.entered == 1
+
+
+def test_switching_to_3d_can_be_declined(cell):
+    pytest.importorskip("rdkit")
+    context = _SwitchingContext(FakePlotter())
+    cp.show_cell(context, cell, enter_3d=False)
+    assert context.entered == 0
+
+
+def test_show_cell_works_on_a_host_without_the_switch(cell):
+    """Older hosts have no enter_3d_viewer_mode; the preview must still work."""
+    pytest.importorskip("rdkit")
+    assert len(cp.show_cell(FakeContext(FakePlotter()), cell)) == 15
