@@ -16,7 +16,7 @@ import logging
 import os
 
 SHARED_MODULE_NAME = "periodic-structure-panel"
-SHARED_MODULE_VERSION = "0.11.0"
+SHARED_MODULE_VERSION = "0.12.0"
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
@@ -373,6 +373,28 @@ class StructurePanel(QWidget):
 
     # -- drag and drop ----------------------------------------------------
 
+    def source_template(self, cell):
+        """The molecule this cell was boxed from, when the atoms still line up.
+
+        Handing it back to the preview keeps the double bonds, aromaticity and
+        charges the user drew; a rebuilt molecule would show single bonds only.
+        """
+        if cell is None or cell.source != "molecule" or self.get_molecule is None:
+            return None
+        try:
+            molecule = self.get_molecule()
+        except Exception as exc:  # pragma: no cover - host API guard
+            logging.debug("Could not read the molecule for the preview: %s", exc)
+            return None
+        if molecule is None:
+            return None
+        try:
+            if molecule.GetNumAtoms() != len(cell.atoms):
+                return None
+        except AttributeError:
+            return None
+        return molecule
+
     def bond_choice(self):
         """True/False when the user has decided, None to leave it automatic."""
         state = self.bonds_check.checkState()
@@ -420,7 +442,7 @@ class StructurePanel(QWidget):
             cell = self.build_cell()
             self._preview_actors = cell_preview.show_cell(
                 self.context, cell, self._preview_actors,
-                show_bonds=self.bond_choice(),
+                show_bonds=self.bond_choice(), template=self.source_template(cell),
             )
         except (ValueError, OSError, AttributeError, ImportError, RuntimeError) as exc:
             QMessageBox.warning(self, "3D preview", str(exc))
@@ -448,7 +470,7 @@ class StructurePanel(QWidget):
         try:
             self._preview_actors = cell_preview.show_cell(
                 self.context, cell, self._preview_actors,
-                show_bonds=self.bond_choice(),
+                show_bonds=self.bond_choice(), template=self.source_template(cell),
             )
         except (ValueError, OSError, AttributeError, ImportError, RuntimeError) as exc:
             logging.debug("Automatic 3D preview skipped: %s", exc)

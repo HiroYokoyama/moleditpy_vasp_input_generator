@@ -1,0 +1,9 @@
+# The shared modules are vendored copies owned by moleditpy-periodic-shared,
+# where they are tested once. Measuring them here would report another repo's
+# coverage as this one's.
+[run]
+omit =
+    */cell_model.py
+    */elements.py
+    */cell_preview.py
+    */structure_panel.py

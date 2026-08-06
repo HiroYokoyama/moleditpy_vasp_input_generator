@@ -19,7 +19,7 @@ loudly.
 from __future__ import annotations
 
 SHARED_MODULE_NAME = "periodic-cell-preview"
-SHARED_MODULE_VERSION = "0.5.0"
+SHARED_MODULE_VERSION = "0.6.0"
 
 import logging
 from typing import List, Optional, Sequence
@@ -113,17 +113,37 @@ def bonds_by_default(cell) -> bool:
     return getattr(cell, "source", "") == "molecule"
 
 
-def build_molecule(cell, bonds: Optional[Sequence] = None):
+def build_molecule(cell, bonds: Optional[Sequence] = None, template=None):
     """An RDKit molecule holding the cell's atoms at their Cartesian positions.
 
-    Bonds are optional and off by default: a periodic cell is cut at its faces,
-    so every bond crossing a face is missing its partner.  The host draws
-    bond-less atoms as spheres, which is a fair picture of a crystal.
+    Bonds are optional: a periodic cell is cut at its faces, so every bond
+    crossing a face is missing its partner, and the host draws bond-less atoms
+    as spheres — a fair picture of a crystal.
+
+    ``template`` is the molecule the cell was built from, when there is one.
+    Boxing a molecule only moves it, so the original is reused with its
+    coordinates replaced; rebuilding it from scratch would hand the viewer
+    single bonds and lose the double bonds, aromaticity and charges the user
+    drew.  It is ignored unless the atom count still matches.
     """
     from rdkit import Chem
     from rdkit.Geometry import Point3D
 
     atoms = list(cell.atoms)
+
+    if template is not None:
+        try:
+            if template.GetNumAtoms() == len(atoms):
+                moved = Chem.Mol(template)
+                conformer = moved.GetConformer()
+                for index, atom in enumerate(atoms):
+                    x, y, z = (float(value) for value in atom.cart)
+                    conformer.SetAtomPosition(index, Point3D(x, y, z))
+                return moved
+        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            # TypeError covers Boost.Python.ArgumentError: a host may hand over
+            # something molecule-shaped that RDKit will not copy.
+            logging.debug("Could not reuse the source molecule: %s", exc)
     editable = Chem.RWMol()
     for atom in atoms:
         try:
@@ -257,6 +277,7 @@ def show_cell(
     main_window=None,
     enter_3d: Optional[bool] = None,
     show_bonds: Optional[bool] = None,
+    template=None,
 ) -> List[str]:
     """Put the cell in the host's 3D view: atoms first, then the box.
 
@@ -283,7 +304,9 @@ def show_cell(
         )
 
     wanted = bonds_by_default(cell) if show_bonds is None else bool(show_bonds)
-    molecule = build_molecule(cell, infer_bonds(cell) if wanted else None)
+    molecule = build_molecule(
+        cell, infer_bonds(cell) if wanted else None, template=template
+    )
     if context is not None and hasattr(context, "current_molecule"):
         # Assigning current_molecule (rather than calling draw_molecule_3d)
         # keeps the host's own record in step, so later style changes redraw

@@ -10,45 +10,42 @@ a CIF file, or the CIF Viewer panel. Entry point
 `vasp_input_generator/__init__.py`, dialog in `main_dialog.py`, all text
 generation in `writer.py` (POTCAR naming in `potentials.py`).
 
-## Shared modules — read this before editing
+## Shared modules — do NOT edit them here
 
-Some files in `vasp_input_generator/` are **not owned by this repository**. A
-byte-identical copy of each lives in every periodic plugin, because these
-plugins ship independently and cannot import from one another:
+Some files in `vasp_input_generator/` are **vendored copies** owned by
+[`moleditpy-periodic-shared`](https://github.com/HiroYokoyama/moleditpy-periodic-shared)
+(`../moleditpy-periodic-shared/` locally). A plugin is installed as a
+self-contained folder and cannot import from another plugin, so each carries a
+byte-identical copy:
 
-| File | `SHARED_MODULE_NAME` | Version | Also in |
-|---|---|---|---|
-| `cell_model.py` | `periodic-cell-model` | 0.7.0 | Quantum ESPRESSO, CP2K, Slab Builder |
-| `elements.py` | `periodic-elements` | 0.1.0 | Quantum ESPRESSO, CP2K, Slab Builder |
-| `cell_preview.py` | `periodic-cell-preview` | 0.1.0 | Quantum ESPRESSO, CP2K, Slab Builder |
-| `structure_panel.py` | `periodic-structure-panel` | 0.5.0 | Quantum ESPRESSO, CP2K |
+| File | `SHARED_MODULE_NAME` |
+|---|---|
+| `cell_model.py` | `periodic-cell-model` |
+| `elements.py` | `periodic-elements` |
+| `cell_preview.py` | `periodic-cell-preview` |
+| `structure_panel.py` | `periodic-structure-panel` |
 
-Sibling repositories under `DEV_MAIN/`:
-`moleditpy_quantum_espresso_input_generator/qe_input_generator/`,
-`moleditpy_cp2k_input_generator/cp2k_input_generator/`,
-`moleditpy_slab_builder/slab_builder/`.
+`.shared-versions.json` records which release each copy came from, and
+`tests/test_shared_sync.py` fails if a copy no longer matches its hash. Editing
+one of these files here is the mistake that check exists to catch.
 
-**The rule when you change one of these files:**
-
-1. Bump its `SHARED_MODULE_VERSION` (the module's own version, independent of
-   `PLUGIN_VERSION`).
-2. Copy the file verbatim over every other copy listed above — the copies must
-   stay byte-identical, so make the edit once and copy, never edit each in turn.
-3. Update the pinned version in each repo's test suite
-   (`tests/test_structure_panel.py`, or `tests/test_cell_model.py` in the Slab
-   Builder). The pin is what makes a stale copy fail loudly instead of drifting.
-4. Run all four test suites, not just this one.
+**To change shared code:**
 
 ```bash
-cd G:/DEV_MAIN
-md5sum moleditpy_*/*/cell_model.py    # every hash must match
+cd ../moleditpy-periodic-shared
+# edit the module and its tests, bump SHARED_MODULE_VERSION in the file
+python -m pytest tests/ -v
+git tag cell-model-v0.8.0 && git push origin cell-model-v0.8.0
+python scripts/sync_shared.py ../moleditpy_vasp_input_generator      # writes the copy + the manifest
 ```
 
-`cell_model.py` imports `elements.py` for its element-symbol table, so the two
-always travel together.  `cell_preview.py` imports RDKit and reaches the host's
-PyVista plotter, but only inside its functions, so the plugin's declared
-dependencies stay `numpy` alone. `structure_panel.py` is the only shared file that
-imports PyQt6.
+Then run this repo's suite and release as usual. Their tests live in that
+repository too, so they are written once rather than four times.
+
+```bash
+cd ../moleditpy-periodic-shared
+python scripts/sync_shared.py ../moleditpy_vasp_input_generator --check   # drifted? non-zero exit
+```
 
 ## Testing
 
@@ -59,6 +56,9 @@ python -m pytest tests/ -v
 Headless; PyQt6 and RDKit are stubbed where needed. `tests/test_api.py` runs
 `plugin_api_checker.py` against the main app when
 `../python_molecular_editor/` exists, and skips otherwise.
+
+`.coveragerc` omits the vendored shared modules, so the coverage figure here is
+this plugin's own code. The shared modules are covered in their own repository.
 
 ## Conventions
 

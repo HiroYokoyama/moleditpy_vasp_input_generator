@@ -15,7 +15,7 @@ from PyQt6.QtWidgets import QWidget  # noqa: E402
 
 import vasp_input_generator as plugin  # noqa: E402
 
-from test_cell_model import _FakeMol  # noqa: E402
+from shared_fixtures import _FakeMol  # noqa: E402
 from test_plugin import FakeContext  # noqa: E402
 
 PACKAGE = "vasp_input_generator"

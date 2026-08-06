@@ -8,7 +8,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from vasp_input_generator import writer  # noqa: E402
 from vasp_input_generator.main_dialog import VaspInputDialog  # noqa: E402
 
-from test_cell_model import _FakeMol  # noqa: E402
+from shared_fixtures import _FakeMol  # noqa: E402
 
 
 @pytest.fixture
@@ -146,7 +146,7 @@ def DIALOG_FACTORY(context):
 
 
 def test_the_dialog_accepts_a_dropped_cif(dialog, tmp_path):
-    from test_structure_panel import _FakeDropEvent, _FakeMime
+    from shared_fixtures import _FakeDropEvent, _FakeMime
 
     path = tmp_path / "dropped.cif"
     path.write_text("data_x", encoding="utf-8")
@@ -158,7 +158,7 @@ def test_the_dialog_accepts_a_dropped_cif(dialog, tmp_path):
 
 
 def test_a_drag_without_a_cif_is_refused_by_the_dialog(dialog):
-    from test_structure_panel import _FakeDropEvent, _FakeMime
+    from shared_fixtures import _FakeDropEvent, _FakeMime
 
     event = _FakeDropEvent(_FakeMime(["/tmp/notes.txt"]))
     dialog.dragEnterEvent(event)
@@ -168,7 +168,7 @@ def test_a_drag_without_a_cif_is_refused_by_the_dialog(dialog):
 
 
 def test_a_drag_move_follows_the_same_rule(dialog):
-    from test_structure_panel import _FakeDropEvent, _FakeMime
+    from shared_fixtures import _FakeDropEvent, _FakeMime
 
     event = _FakeDropEvent(_FakeMime(["/tmp/x.cif"]))
     dialog.dragMoveEvent(event)
@@ -178,7 +178,7 @@ def test_a_drag_move_follows_the_same_rule(dialog):
 def test_the_box_is_drawn_as_soon_as_the_dialog_opens(qapp):
     """Opening the generator should show the cell, not an empty viewer."""
     pytest.importorskip("rdkit")
-    from test_structure_panel import _RecordingContext
+    from shared_fixtures import _RecordingContext
 
     context = _RecordingContext()
     dlg = DIALOG_FACTORY(context)

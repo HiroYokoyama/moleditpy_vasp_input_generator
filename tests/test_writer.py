@@ -8,7 +8,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from vasp_input_generator import cell_model as cm  # noqa: E402
 from vasp_input_generator import potentials, writer  # noqa: E402
 
-from test_cell_model import CUBIC_CIF  # noqa: E402
+from shared_fixtures import CUBIC_CIF  # noqa: E402
 
 
 @pytest.fixture
