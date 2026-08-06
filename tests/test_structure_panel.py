@@ -20,7 +20,7 @@ from test_cell_model import CUBIC_CIF, _FakeMol  # noqa: E402
     "module,name,version",
     [
         (cm, "periodic-cell-model", "0.7.0"),
-        (sp, "periodic-structure-panel", "0.6.0"),
+        (sp, "periodic-structure-panel", "0.7.0"),
         (__import__("vasp_input_generator.elements", fromlist=["x"]), "periodic-elements", "0.1.0"),
     ],
 )
@@ -387,3 +387,82 @@ def test_auto_preview_stays_silent_when_the_viewer_is_missing(preview_panel):
     panel, _ = preview_panel
     panel.context = None
     panel.refresh_summary(panel.build_cell())
+
+
+# -- drag and drop ----------------------------------------------------------
+
+
+class _FakeUrl:
+    def __init__(self, path):
+        self._path = path
+
+    def toLocalFile(self):
+        return self._path
+
+
+class _FakeMime:
+    def __init__(self, paths):
+        self._urls = [_FakeUrl(p) for p in paths]
+
+    def hasUrls(self):
+        return bool(self._urls)
+
+    def urls(self):
+        return self._urls
+
+
+class _FakeDropEvent:
+    def __init__(self, mime):
+        self._mime = mime
+        self.accepted = False
+        self.ignored = False
+
+    def mimeData(self):
+        return self._mime
+
+    def acceptProposedAction(self):
+        self.accepted = True
+
+    def ignore(self):
+        self.ignored = True
+
+
+def test_dropped_cif_path_picks_the_cif():
+    assert sp.dropped_cif_path(_FakeMime(["/tmp/a.txt", "/tmp/b.CIF"])) == "/tmp/b.CIF"
+    assert sp.dropped_cif_path(_FakeMime(["/tmp/c.mmcif"])) == "/tmp/c.mmcif"
+
+
+def test_dropped_cif_path_ignores_everything_else():
+    assert sp.dropped_cif_path(_FakeMime(["/tmp/a.xyz"])) == ""
+    assert sp.dropped_cif_path(_FakeMime([])) == ""
+    assert sp.dropped_cif_path(None) == ""
+
+
+def test_dropping_a_cif_switches_the_source_over(panel, tmp_path):
+    """Leaving the source on 'current molecule' would ignore the drop."""
+    path = tmp_path / "dropped.cif"
+    path.write_text(CUBIC_CIF, encoding="utf-8")
+    panel.source_combo.setCurrentText(sp.SOURCE_MOLECULE)
+    event = _FakeDropEvent(_FakeMime([str(path)]))
+    panel.dropEvent(event)
+    assert event.accepted
+    assert panel.source_combo.currentText() == sp.SOURCE_CIF
+    assert panel.cif_edit.text() == str(path)
+
+
+def test_a_drag_without_a_cif_is_refused(panel):
+    event = _FakeDropEvent(_FakeMime(["/tmp/notes.txt"]))
+    panel.dragEnterEvent(event)
+    assert event.ignored and not event.accepted
+    panel.dropEvent(event)
+    assert not event.accepted
+
+
+def test_a_drag_carrying_a_cif_is_accepted(panel):
+    event = _FakeDropEvent(_FakeMime(["/tmp/x.cif"]))
+    panel.dragEnterEvent(event)
+    assert event.accepted
+
+
+def test_the_panel_accepts_drops(panel):
+    assert panel.acceptDrops()

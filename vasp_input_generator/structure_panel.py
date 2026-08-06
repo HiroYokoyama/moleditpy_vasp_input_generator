@@ -16,7 +16,7 @@ import logging
 import os
 
 SHARED_MODULE_NAME = "periodic-structure-panel"
-SHARED_MODULE_VERSION = "0.6.0"
+SHARED_MODULE_VERSION = "0.7.0"
 
 from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import (
@@ -51,6 +51,9 @@ SOURCE_MOLECULE = "Current molecule (vacuum box)"
 SOURCE_CIF = "CIF file"
 SOURCE_VIEWER = "CIF Viewer panel (currently loaded)"
 SOURCES = (SOURCE_MOLECULE, SOURCE_CIF, SOURCE_VIEWER)
+
+#: Suffixes accepted by drag and drop.  mmCIF uses .mmcif or .cif alike.
+CIF_SUFFIXES = (".cif", ".mmcif")
 
 
 def find_cif_viewer_widget(main_window):
@@ -98,6 +101,17 @@ def find_cif_viewer_widget(main_window):
     return None
 
 
+def dropped_cif_path(mime) -> str:
+    """Local path of the first .cif in a drag, or "" when there is none."""
+    if mime is None or not mime.hasUrls():
+        return ""
+    for url in mime.urls():
+        path = url.toLocalFile()
+        if path and os.path.splitext(path)[1].lower() in CIF_SUFFIXES:
+            return path
+    return ""
+
+
 class StructurePanel(QWidget):
     """Source selector + cell builder.  Emits ``changed`` on every edit."""
 
@@ -112,6 +126,7 @@ class StructurePanel(QWidget):
         self._last_error = ""
         self._preview_actors = []
         self._auto_previewed_key = None
+        self.setAcceptDrops(True)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -339,6 +354,34 @@ class StructurePanel(QWidget):
             f"alpha={alpha:.2f} beta={beta:.2f} gamma={gamma:.2f} deg, "
             f"V={cell.volume:.2f} A<sup>3</sup>"
         )
+
+    # -- drag and drop ----------------------------------------------------
+
+    def load_cif_path(self, path: str) -> None:
+        """Point the panel at a CIF, switching the source over to match.
+
+        Dropping a file is a request to use it, so leaving the source on
+        "current molecule" would silently ignore the drop.
+        """
+        self.source_combo.setCurrentText(SOURCE_CIF)
+        self.cif_edit.setText(str(path))
+
+    def dragEnterEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        if dropped_cif_path(event.mimeData()):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        self.dragEnterEvent(event)
+
+    def dropEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        path = dropped_cif_path(event.mimeData())
+        if not path:
+            event.ignore()
+            return
+        self.load_cif_path(path)
+        event.acceptProposedAction()
 
     # -- 3D preview -------------------------------------------------------
 

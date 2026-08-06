@@ -31,7 +31,7 @@ from PyQt6.QtWidgets import (
 
 from . import PLUGIN_NAME, PLUGIN_VERSION
 from . import writer
-from .structure_panel import StructurePanel
+from .structure_panel import StructurePanel, dropped_cif_path
 
 _FILE_ORDER = ("INCAR", "KPOINTS", "POSCAR", "POTCAR.readme")
 
@@ -55,6 +55,7 @@ class VaspInputDialog(QDialog):
         self.get_selected_indices = get_selected_indices
         self.mark_modified = mark_modified
         self.context = context
+        self.setAcceptDrops(True)
         self._updating = False
         self._cell = None
         self._net_charge = 0
@@ -293,6 +294,26 @@ class VaspInputDialog(QDialog):
             spin.valueChanged.connect(self.update_preview)
         self.kspacing_spin.valueChanged.connect(self.update_preview)
         return tab
+
+    # -- drag and drop ----------------------------------------------------
+
+    def dragEnterEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        """Accept a CIF dropped anywhere on the dialog, not just on the panel."""
+        if dropped_cif_path(event.mimeData()):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        self.dragEnterEvent(event)
+
+    def dropEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        path = dropped_cif_path(event.mimeData())
+        if not path:
+            event.ignore()
+            return
+        self.structure_panel.load_cif_path(path)
+        event.acceptProposedAction()
 
     # -- settings ---------------------------------------------------------
 
