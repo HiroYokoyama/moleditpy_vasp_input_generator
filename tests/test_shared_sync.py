@@ -31,6 +31,18 @@ def _package_dir():
     raise AssertionError("no plugin package found")
 
 
+def _digest(path):
+    """Hash with line endings normalised to LF.
+
+    Git rewrites line endings on checkout, so the same commit has different
+    bytes on a Windows runner than on a Linux one; hashing raw bytes made this
+    check fail on Windows for files nobody had touched.
+    """
+    with open(path, "rb") as handle:
+        content = handle.read().replace(b"\r\n", b"\n")
+    return hashlib.sha256(content).hexdigest()
+
+
 def _manifest():
     with open(MANIFEST_PATH, encoding="utf-8") as handle:
         return json.load(handle)
@@ -47,8 +59,7 @@ def test_the_vendored_copy_matches_its_release(filename):
     expected = _manifest()[filename]
     path = os.path.join(_package_dir(), filename)
     assert os.path.isfile(path), f"{filename} is missing from the package"
-    with open(path, "rb") as handle:
-        digest = hashlib.sha256(handle.read()).hexdigest()
+    digest = _digest(path)
     assert digest == expected["sha256"], (
         f"{filename} does not match {expected['module']} {expected['version']}. "
         "Edit it in moleditpy-periodic-shared and re-run scripts/sync_shared.py."
