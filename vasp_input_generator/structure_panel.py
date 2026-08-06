@@ -367,6 +367,7 @@ class StructurePanel(QWidget):
         self.cif_edit.setText(str(path))
 
     def dragEnterEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        """Drops land on this panel only, not on the whole dialog."""
         if dropped_cif_path(event.mimeData()):
             event.acceptProposedAction()
         else:
