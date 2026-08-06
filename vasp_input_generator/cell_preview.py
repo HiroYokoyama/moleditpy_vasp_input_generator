@@ -93,6 +93,20 @@ def build_molecule(cell, bonds: Optional[Sequence] = None):
         editable.AddBond(int(left), int(right), Chem.BondType.SINGLE)
 
     molecule = editable.GetMol()
+
+    # The host's renderer calls GetRingInfo() and GetTotalNumHs(), and both
+    # raise a Pre-condition Violation on a molecule that was never sanitised —
+    # after the plotter has already been cleared, so the 3D view ends up empty.
+    # Full sanitisation is wrong here (a crystal is full of valences RDKit would
+    # reject), so initialise just the two caches the renderer needs.
+    for atom in molecule.GetAtoms():
+        # A crystal site carries no implicit hydrogens; without this a bare
+        # oxygen would be drawn and labelled as if it were water.
+        atom.SetNoImplicit(True)
+        atom.SetNumExplicitHs(0)
+    molecule.UpdatePropertyCache(strict=False)
+    Chem.FastFindRings(molecule)
+
     conformer = Chem.Conformer(len(atoms))
     for index, atom in enumerate(atoms):
         x, y, z = (float(value) for value in atom.cart)
@@ -215,4 +229,13 @@ def show_cell(context, cell, actor_names: Sequence[str] = (), main_window=None) 
             raise ValueError("MoleditPy's 3D view is not available.")
         window.draw_molecule_3d(molecule)
 
-    return draw_cell_box(context, cell, actor_names, main_window)
+    names = draw_cell_box(context, cell, actor_names, main_window)
+
+    # The host restores the previous camera after a redraw, so a cell much
+    # larger than whatever was on screen before would sit outside the view.
+    if context is not None and hasattr(context, "reset_3d_camera"):
+        try:
+            context.reset_3d_camera()
+        except Exception as exc:  # pragma: no cover - host API guard
+            logging.debug("Could not reset the camera: %s", exc)
+    return names

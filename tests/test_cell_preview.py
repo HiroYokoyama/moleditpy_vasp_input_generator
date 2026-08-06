@@ -181,3 +181,55 @@ def test_show_cell_rejects_a_missing_viewer(cell):
 
     with pytest.raises(ValueError, match="3D view is not available"):
         cp.show_cell(None, cell, main_window=Bare())
+
+
+# -- the molecule must survive the host's renderer ---------------------------
+
+
+def test_the_molecule_answers_the_calls_the_host_renderer_makes(cell):
+    """An unsanitised molecule blanked the 3D view.
+
+    view_3d_logic clears the plotter before it draws, then calls GetRingInfo()
+    (for aromatic circles) and GetTotalNumHs() (for labels).  Both raise a
+    Pre-condition Violation on a molecule that was never sanitised, so the draw
+    died half-way and left an empty viewer.
+    """
+    pytest.importorskip("rdkit")
+    molecule = cp.build_molecule(cell)
+    assert molecule.GetRingInfo().NumRings() == 0
+    for atom in molecule.GetAtoms():
+        assert atom.GetTotalNumHs() == 0
+
+
+def test_a_crystal_site_gains_no_implicit_hydrogens():
+    """A bare oxygen must not be drawn or labelled as if it were water."""
+    pytest.importorskip("rdkit")
+    lattice = cm.cell_vectors((5.0, 5.0, 5.0), (90.0, 90.0, 90.0))
+    atoms = (cm.CellAtom("O1", "O", np.zeros(3), np.zeros(3), 1.0),)
+    molecule = cp.build_molecule(cm.Cell("x", (5.0,) * 3, (90.0,) * 3, lattice, atoms))
+    assert molecule.GetAtomWithIdx(0).GetTotalNumHs() == 0
+    assert molecule.GetAtomWithIdx(0).GetNoImplicit()
+
+
+def test_show_cell_refits_the_camera(cell):
+    """The host restores the old camera, so a big cell would land off-screen."""
+    pytest.importorskip("rdkit")
+
+    class CountingContext(FakeContext):
+        def __init__(self, plotter):
+            super().__init__(plotter)
+            self.resets = 0
+
+        def reset_3d_camera(self):
+            self.resets += 1
+
+    context = CountingContext(FakePlotter())
+    cp.show_cell(context, cell)
+    assert context.resets == 1
+
+
+def test_show_cell_works_without_the_camera_helper(cell):
+    """Older hosts have no reset_3d_camera; the preview must still work."""
+    pytest.importorskip("rdkit")
+    context = FakeContext(FakePlotter())
+    assert len(cp.show_cell(context, cell)) == 15
