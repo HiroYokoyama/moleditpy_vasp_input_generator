@@ -18,9 +18,10 @@ plugins ship independently and cannot import from one another:
 
 | File | `SHARED_MODULE_NAME` | Version | Also in |
 |---|---|---|---|
-| `cell_model.py` | `periodic-cell-model` | 0.6.0 | Quantum ESPRESSO, CP2K, Slab Builder |
+| `cell_model.py` | `periodic-cell-model` | 0.7.0 | Quantum ESPRESSO, CP2K, Slab Builder |
 | `elements.py` | `periodic-elements` | 0.1.0 | Quantum ESPRESSO, CP2K, Slab Builder |
-| `structure_panel.py` | `periodic-structure-panel` | 0.4.0 | Quantum ESPRESSO, CP2K |
+| `cell_preview.py` | `periodic-cell-preview` | 0.1.0 | Quantum ESPRESSO, CP2K, Slab Builder |
+| `structure_panel.py` | `periodic-structure-panel` | 0.5.0 | Quantum ESPRESSO, CP2K |
 
 Sibling repositories under `DEV_MAIN/`:
 `moleditpy_quantum_espresso_input_generator/qe_input_generator/`,
@@ -44,7 +45,9 @@ md5sum moleditpy_*/*/cell_model.py    # every hash must match
 ```
 
 `cell_model.py` imports `elements.py` for its element-symbol table, so the two
-always travel together. `structure_panel.py` is the only shared file that
+always travel together.  `cell_preview.py` imports RDKit and reaches the host's
+PyVista plotter, but only inside its functions, so the plugin's declared
+dependencies stay `numpy` alone. `structure_panel.py` is the only shared file that
 imports PyQt6.
 
 ## Testing

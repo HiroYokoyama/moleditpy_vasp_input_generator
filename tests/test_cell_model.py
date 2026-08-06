@@ -560,3 +560,151 @@ def test_is_element():
 def test_make_supercell_keeps_the_operation_count():
     cell = cm.make_supercell(cm.parse_cif(CUBIC_CIF), [2, 1, 1])
     assert cell.symmetry_operations == 2
+
+
+# -- primitive-cell reduction ----------------------------------------------
+
+
+_F_OPS = ["x, y, z", "x, y+1/2, z+1/2", "x+1/2, y, z+1/2", "x+1/2, y+1/2, z"]
+_I_OPS = ["x, y, z", "x+1/2, y+1/2, z+1/2"]
+
+
+def _centred_cif(a, ops, sites):
+    lines = "\n".join(f"'{op}'" for op in ops)
+    rows = "\n".join(sites)
+    return f"""data_x
+_cell_length_a {a}
+_cell_length_b {a}
+_cell_length_c {a}
+_cell_angle_alpha 90
+_cell_angle_beta 90
+_cell_angle_gamma 90
+_symmetry_space_group_name_H-M 'P 1'
+loop_
+_symmetry_equiv_pos_as_xyz
+{lines}
+loop_
+_atom_site_label
+_atom_site_type_symbol
+_atom_site_fract_x
+_atom_site_fract_y
+_atom_site_fract_z
+{rows}
+"""
+
+
+def _shortest_contact(cell):
+    """Nearest neighbour including an atom's own periodic images."""
+    best = min(
+        float(np.linalg.norm(np.array(v, dtype=float) @ cell.lattice))
+        for v in ([1, 0, 0], [0, 1, 0], [0, 0, 1], [1, 1, 0], [1, 0, 1], [0, 1, 1],
+                  [1, -1, 0], [1, 0, -1], [0, 1, -1], [1, 1, 1], [1, 1, -1])
+    )
+    for index, atom in enumerate(cell.atoms):
+        for other in cell.atoms[index + 1:]:
+            best = min(best, cm.minimum_image_distance(atom.fract, other.fract, cell.lattice))
+    return best
+
+
+def test_translation_symmetries_find_the_body_centring():
+    cell = cm.parse_cif(_centred_cif(2.87, _I_OPS, ["Fe1 Fe 0 0 0"]))
+    found = cm.translation_symmetries(cell)
+    assert len(found) == 1
+    assert np.allclose(sorted(found[0]), [0.5, 0.5, 0.5])
+
+
+def test_translation_symmetries_find_the_face_centring():
+    cell = cm.parse_cif(_centred_cif(3.615, _F_OPS, ["Cu1 Cu 0 0 0"]))
+    assert len(cm.translation_symmetries(cell)) == 3
+
+
+def test_translation_symmetries_are_empty_for_a_primitive_cell():
+    cell = cm.parse_cif(_centred_cif(4.0, ["x, y, z"], ["Cs1 Cs 0 0 0", "Cl1 Cl 0.5 0.5 0.5"]))
+    assert cm.translation_symmetries(cell) == []
+
+
+def test_a_translation_must_map_every_element_onto_its_own_kind():
+    """CsCl looks body-centred until the elements are taken into account."""
+    cell = cm.parse_cif(_centred_cif(4.11, ["x, y, z"], ["Cs1 Cs 0 0 0", "Cl1 Cl 0.5 0.5 0.5"]))
+    assert cm.primitive_cell(cell) is cell
+
+
+def test_bcc_reduces_to_one_atom():
+    cell = cm.parse_cif(_centred_cif(2.8665, _I_OPS, ["Fe1 Fe 0 0 0"]))
+    primitive = cm.primitive_cell(cell)
+    assert len(primitive.atoms) == 1
+    assert cell.volume / primitive.volume == pytest.approx(2.0)
+    # a_prim = a * sqrt(3) / 2, angles 109.47 / 70.53
+    assert primitive.lengths[0] == pytest.approx(2.8665 * math.sqrt(3) / 2)
+
+
+def test_fcc_reduces_to_the_textbook_60_degree_cell():
+    cell = cm.parse_cif(_centred_cif(3.615, _F_OPS, ["Cu1 Cu 0 0 0"]))
+    primitive = cm.primitive_cell(cell)
+    assert len(primitive.atoms) == 1
+    assert cell.volume / primitive.volume == pytest.approx(4.0)
+    assert primitive.lengths[0] == pytest.approx(3.615 / math.sqrt(2))
+    for angle in primitive.angles:
+        assert angle == pytest.approx(60.0)
+
+
+def test_reduction_preserves_the_number_density_and_contacts():
+    cell = cm.parse_cif(_centred_cif(5.64, _F_OPS, ["Na1 Na 0 0 0", "Cl1 Cl 0.5 0.5 0.5"]))
+    primitive = cm.primitive_cell(cell)
+    assert len(primitive.atoms) == 2
+    assert len(cell.atoms) / cell.volume == pytest.approx(len(primitive.atoms) / primitive.volume)
+    assert _shortest_contact(primitive) == pytest.approx(_shortest_contact(cell))
+
+
+def test_reduction_undoes_a_supercell():
+    """An exact supercell is translational symmetry too, so it collapses."""
+    cell = cm.parse_cif(_centred_cif(5.64, _F_OPS, ["Na1 Na 0 0 0", "Cl1 Cl 0.5 0.5 0.5"]))
+    doubled = cm.make_supercell(cell, [2, 2, 1])
+    assert len(doubled.atoms) == 32
+    assert len(cm.primitive_cell(doubled).atoms) == 2
+
+
+def test_a_primitive_cell_is_returned_unchanged():
+    cell = cm.parse_cif(_centred_cif(4.0, ["x, y, z"], ["Po1 Po 0 0 0"]))
+    assert cm.primitive_cell(cell) is cell
+
+
+def test_reduction_keeps_the_cell_right_handed():
+    for ops in (_I_OPS, _F_OPS):
+        primitive = cm.primitive_cell(cm.parse_cif(_centred_cif(3.5, ops, ["Cu1 Cu 0 0 0"])))
+        assert np.linalg.det(primitive.lattice) > 0
+        assert cm.structure_warnings(primitive) == []
+
+
+def test_a_partially_occupied_site_does_not_match_a_full_one():
+    """A vacancy-ordered cell is not centred, however alike the sites look."""
+    lattice = cm.cell_vectors((4.0, 4.0, 4.0), (90.0, 90.0, 90.0))
+    atoms = (
+        cm.CellAtom("Fe1", "Fe", np.zeros(3), np.zeros(3), 1.0),
+        cm.CellAtom("Fe2", "Fe", np.full(3, 0.5), cm.fractional_to_cartesian([0.5] * 3, lattice), 0.5),
+    )
+    cell = cm.Cell("x", (4.0,) * 3, (90.0,) * 3, lattice, atoms, source="cif")
+    assert cm.translation_symmetries(cell) == []
+
+
+# -- LLL reduction ----------------------------------------------------------
+
+
+def test_lll_shortens_a_skewed_basis_without_changing_the_lattice():
+    lattice = np.array([[1.0, 0.0, 0.0], [10.0, 1.0, 0.0], [0.0, 0.0, 1.0]])
+    reduced, transformation = cm.lll_reduce(lattice)
+    assert abs(np.linalg.det(reduced)) == pytest.approx(abs(np.linalg.det(lattice)))
+    assert np.allclose(transformation @ lattice, reduced)
+    assert np.linalg.norm(reduced[1]) < np.linalg.norm(lattice[1])
+
+
+def test_lll_keeps_the_basis_right_handed():
+    lattice = np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, -1.0]])
+    reduced, _ = cm.lll_reduce(lattice)
+    assert np.linalg.det(reduced) > 0
+
+
+def test_lll_leaves_an_already_reduced_basis_alone():
+    lattice = cm.cell_vectors((3.0, 4.0, 5.0), (90.0, 90.0, 90.0))
+    reduced, _ = cm.lll_reduce(lattice)
+    assert sorted(round(float(np.linalg.norm(row)), 6) for row in reduced) == [3.0, 4.0, 5.0]

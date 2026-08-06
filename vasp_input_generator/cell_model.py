@@ -16,7 +16,7 @@ loudly.
 from __future__ import annotations
 
 SHARED_MODULE_NAME = "periodic-cell-model"
-SHARED_MODULE_VERSION = "0.6.0"
+SHARED_MODULE_VERSION = "0.7.0"
 
 from dataclasses import dataclass
 import itertools
@@ -923,6 +923,218 @@ def vacuum_gap(cell: Cell) -> float:
     spacing = abs(float(np.dot(lattice[2], normal)))
     heights = [float(np.dot(np.asarray(atom.cart, dtype=float), normal)) for atom in cell.atoms]
     return max(0.0, spacing - (max(heights) - min(heights)))
+
+
+def translation_symmetries(
+    cell: Cell, tolerance: float = 0.1, limit: int = 400
+) -> List[np.ndarray]:
+    """Fractional translations that map the structure onto itself.
+
+    For a centred lattice these come out as the centring vectors (½,½,½ for I,
+    the three face vectors for F).  Detecting them from the atoms rather than
+    from the space-group symbol means a non-standard setting, a CIF with no
+    symbol at all, and a structure handed over by the CIF Viewer all work the
+    same way.
+    """
+    atoms = cell.atoms
+    count = len(atoms)
+    if count < 2 or count > int(limit):
+        return []
+
+    lattice = np.asarray(cell.lattice, dtype=float)
+    fract = np.array([atom.fract for atom in atoms], dtype=float)
+    elements = [atom.element for atom in atoms]
+    occupancies = [atom.occupancy for atom in atoms]
+
+    def maps_onto_itself(shift: np.ndarray) -> bool:
+        for index in range(count):
+            target = fract[index] + shift
+            for other in range(count):
+                if elements[other] != elements[index]:
+                    continue
+                if occupancies[other] != occupancies[index]:
+                    continue
+                if minimum_image_distance(target, fract[other], lattice) < tolerance:
+                    break
+            else:
+                return False
+        return True
+
+    # A translation must carry atom 0 onto some atom of the same element, so
+    # only those differences can possibly work.
+    found: List[np.ndarray] = []
+    for index in range(1, count):
+        if elements[index] != elements[0] or occupancies[index] != occupancies[0]:
+            continue
+        shift = wrap_fractional(fract[index] - fract[0])
+        if np.allclose(shift, 0.0, atol=1e-6):
+            continue
+        if any(np.allclose(shift, previous, atol=1e-4) for previous in found):
+            continue
+        if maps_onto_itself(shift):
+            found.append(shift)
+    return found
+
+
+def primitive_transformation(cell: Cell, tolerance: float = 0.1) -> Optional[np.ndarray]:
+    """Fractional basis (rows) of the primitive lattice, or None if already primitive.
+
+    Built by picking the smallest-volume full-rank triple from the translations
+    plus the unit vectors, then checking that every translation is an integer
+    combination of it — which is what makes the result a lattice basis rather
+    than three vectors that merely happen to be short.
+    """
+    translations = translation_symmetries(cell, tolerance=tolerance)
+    if not translations:
+        return None
+
+    candidates = list(translations) + [np.eye(3)[index] for index in range(3)]
+    best: Optional[np.ndarray] = None
+    best_volume = 1.0 - 1e-9
+
+    for first in range(len(candidates)):
+        for second in range(first + 1, len(candidates)):
+            for third in range(second + 1, len(candidates)):
+                matrix = np.array(
+                    [candidates[first], candidates[second], candidates[third]], dtype=float
+                )
+                volume = abs(float(np.linalg.det(matrix)))
+                if volume < 1e-6 or volume >= best_volume:
+                    continue
+                # 1/volume is how many copies of the primitive cell this cell holds.
+                if abs(round(1.0 / volume) - 1.0 / volume) > 1e-6:
+                    continue
+                inverse = np.linalg.inv(matrix)
+                if not all(
+                    np.allclose(np.round(shift @ inverse), shift @ inverse, atol=1e-4)
+                    for shift in translations
+                ):
+                    continue
+                best, best_volume = matrix, volume
+
+    if best is None:
+        return None
+    if np.linalg.det(best) < 0:
+        best = best[[1, 0, 2]]
+    return best
+
+
+def lll_reduce(lattice) -> Tuple[np.ndarray, np.ndarray]:
+    """LLL-reduce a 3x3 lattice; returns (reduced lattice, integer transformation).
+
+    A primitive basis picked for having the right volume can be badly skewed,
+    which wastes FFT grid and distorts the k-point spacing.  Reduction picks a
+    short, near-orthogonal basis spanning the same lattice.
+    """
+    basis = np.asarray(lattice, dtype=float).copy()
+    transformation = np.eye(3)
+
+    def gram_schmidt(rows):
+        orthogonal = np.zeros_like(rows)
+        mu = np.zeros((3, 3))
+        for index in range(3):
+            orthogonal[index] = rows[index]
+            for other in range(index):
+                norm = float(orthogonal[other] @ orthogonal[other])
+                mu[index, other] = (rows[index] @ orthogonal[other]) / norm if norm > 1e-30 else 0.0
+                orthogonal[index] = orthogonal[index] - mu[index, other] * orthogonal[other]
+        return orthogonal, mu
+
+    index = 1
+    guard = 0
+    while index < 3 and guard < 1000:
+        guard += 1
+        orthogonal, mu = gram_schmidt(basis)
+        for other in range(index - 1, -1, -1):
+            factor = round(mu[index, other])
+            if factor:
+                basis[index] -= factor * basis[other]
+                transformation[index] -= factor * transformation[other]
+                orthogonal, mu = gram_schmidt(basis)
+        left = float(orthogonal[index] @ orthogonal[index])
+        right = (0.75 - mu[index, index - 1] ** 2) * float(
+            orthogonal[index - 1] @ orthogonal[index - 1]
+        )
+        if left >= right:
+            index += 1
+        else:
+            basis[[index - 1, index]] = basis[[index, index - 1]]
+            transformation[[index - 1, index]] = transformation[[index, index - 1]]
+            index = max(index - 1, 1)
+
+    if np.linalg.det(basis) < 0:
+        basis = basis[[1, 0, 2]]
+        transformation = transformation[[1, 0, 2]]
+
+    # Flipping a vector's sign spans the same lattice but changes the reported
+    # angles; prefer the all-acute setting so fcc comes out as the familiar
+    # 60/60/60 cell rather than an equivalent 60/120/120 one.
+    best = (basis, transformation, -1)
+    for signs in itertools.product((1, -1), repeat=3):
+        signed = basis * np.array(signs, dtype=float)[:, None]
+        if np.linalg.det(signed) <= 0:
+            continue
+        acute = sum(
+            1
+            for i, j in ((0, 1), (0, 2), (1, 2))
+            if float(signed[i] @ signed[j]) > 1e-9
+        )
+        if acute > best[2]:
+            best = (signed, transformation * np.array(signs)[:, None], acute)
+    basis, transformation = best[0], best[1]
+    return basis, np.rint(transformation).astype(int)
+
+
+def primitive_cell(cell: Cell, tolerance: float = 0.1, reduce_basis: bool = True) -> Cell:
+    """Reduce a centred (or repeated) cell to its primitive one.
+
+    Returns the cell unchanged when it is already primitive.  Only translational
+    symmetry is used, so this reduces centred lattices and exact supercells; it
+    is not a full spglib-style symmetry analysis.
+    """
+    matrix = primitive_transformation(cell, tolerance=tolerance)
+    if matrix is None:
+        return cell
+
+    lattice = matrix @ np.asarray(cell.lattice, dtype=float)
+    if reduce_basis:
+        lattice, _ = lll_reduce(lattice)
+
+    kept: List[CellAtom] = []
+    for atom in cell.atoms:
+        fract = wrap_fractional(np.asarray(atom.cart, dtype=float) @ np.linalg.inv(lattice))
+        if any(
+            minimum_image_distance(fract, previous.fract, lattice) < tolerance
+            for previous in kept
+        ):
+            continue
+        kept.append(
+            CellAtom(
+                label=atom.label,
+                element=atom.element,
+                fract=fract,
+                cart=fractional_to_cartesian(fract, lattice),
+                occupancy=atom.occupancy,
+            )
+        )
+
+    expected = len(cell.atoms) * abs(float(np.linalg.det(matrix)))
+    if abs(len(kept) - expected) > 1e-6:
+        # The reduction did not divide the structure evenly, so it was not a
+        # true translational symmetry — keep the cell we were given.
+        return cell
+
+    lengths, angles = lattice_parameters(lattice)
+    return Cell(
+        name=cell.name,
+        lengths=lengths,
+        angles=angles,
+        lattice=lattice,
+        atoms=tuple(kept),
+        space_group=cell.space_group,
+        source=cell.source,
+        symmetry_operations=cell.symmetry_operations,
+    )
 
 
 def minimum_image_distance(fract_a, fract_b, lattice) -> float:

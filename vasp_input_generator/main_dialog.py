@@ -44,6 +44,7 @@ class VaspInputDialog(QDialog):
         get_selected_indices=None,
         mark_modified=None,
         get_cif_viewer=None,
+        context=None,
     ):
         super().__init__(parent)
         self.setWindowTitle("VASP Input Generator")
@@ -52,6 +53,7 @@ class VaspInputDialog(QDialog):
         self.persistent_settings = persistent_settings if persistent_settings is not None else {}
         self.get_selected_indices = get_selected_indices
         self.mark_modified = mark_modified
+        self.context = context
         self._updating = False
         self._cell = None
         self._net_charge = 0
@@ -62,7 +64,7 @@ class VaspInputDialog(QDialog):
         layout.addWidget(self.tabs, 1)
 
         self.structure_panel = StructurePanel(
-            get_molecule=get_molecule, get_cif_viewer=get_cif_viewer
+            get_molecule=get_molecule, get_cif_viewer=get_cif_viewer, context=context
         )
         structure_tab = QWidget()
         structure_layout = QVBoxLayout(structure_tab)

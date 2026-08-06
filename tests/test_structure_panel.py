@@ -19,8 +19,8 @@ from test_cell_model import CUBIC_CIF, _FakeMol  # noqa: E402
 @pytest.mark.parametrize(
     "module,name,version",
     [
-        (cm, "periodic-cell-model", "0.6.0"),
-        (sp, "periodic-structure-panel", "0.4.0"),
+        (cm, "periodic-cell-model", "0.7.0"),
+        (sp, "periodic-structure-panel", "0.5.0"),
         (__import__("vasp_input_generator.elements", fromlist=["x"]), "periodic-elements", "0.1.0"),
     ],
 )
@@ -259,6 +259,7 @@ def test_panel_settings_roundtrip(panel):
         "cubic_box": True,
         "cif_path": panel._cif_path,
         "expand_symmetry": False,
+        "primitive_cell": True,
         "supercell": [2, 3, 4],
     }
     panel.apply_settings(settings)

@@ -16,7 +16,7 @@ import logging
 import os
 
 SHARED_MODULE_NAME = "periodic-structure-panel"
-SHARED_MODULE_VERSION = "0.4.0"
+SHARED_MODULE_VERSION = "0.5.0"
 
 from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import (
@@ -30,18 +30,21 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QSpinBox,
     QVBoxLayout,
     QWidget,
 )
 
+from . import cell_preview
 from .cell_model import (
     Cell,
     cell_from_viewer_structure,
     make_supercell,
     molecule_to_cell,
     parse_cif_file,
+    primitive_cell,
 )
 
 SOURCE_MOLECULE = "Current molecule (vacuum box)"
@@ -99,12 +102,15 @@ class StructurePanel(QWidget):
     """Source selector + cell builder.  Emits ``changed`` on every edit."""
 
     changed = pyqtSignal()
+    previewed = pyqtSignal()
 
-    def __init__(self, get_molecule=None, get_cif_viewer=None, parent=None):
+    def __init__(self, get_molecule=None, get_cif_viewer=None, parent=None, context=None):
         super().__init__(parent)
         self.get_molecule = get_molecule
         self.get_cif_viewer = get_cif_viewer
+        self.context = context
         self._last_error = ""
+        self._preview_actors = []
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -161,6 +167,16 @@ class StructurePanel(QWidget):
         self.expand_check.setChecked(True)
         source_form.addRow("", self.expand_check)
 
+        self.primitive_check = QCheckBox("Reduce to the primitive cell")
+        self.primitive_check.setToolTip(
+            "Detects the translational symmetry of the structure and drops the repeats: "
+            "a face-centred cell of 4 atoms becomes 1.\n"
+            "The physics is unchanged and the code still finds the point group, but the "
+            "run is far cheaper.\n"
+            "Only translations are used, so this is not a full symmetry analysis."
+        )
+        source_form.addRow("", self.primitive_check)
+
         self.viewer_widget = QWidget()
         viewer_layout = QHBoxLayout(self.viewer_widget)
         viewer_layout.setContentsMargins(0, 0, 0, 0)
@@ -186,6 +202,22 @@ class StructurePanel(QWidget):
             self.repeat_spins.append(spin)
         layout.addWidget(super_box)
 
+        preview_row = QWidget()
+        preview_layout = QHBoxLayout(preview_row)
+        preview_layout.setContentsMargins(0, 0, 0, 0)
+        self.preview_button = QPushButton("Show in 3D view")
+        self.preview_button.setToolTip(
+            "Draw this cell in MoleditPy's own 3D view, with the unit-cell box."
+        )
+        self.preview_button.clicked.connect(self.preview_in_3d)
+        self.clear_preview_button = QPushButton("Clear box")
+        self.clear_preview_button.setToolTip("Remove the cell box from the 3D view.")
+        self.clear_preview_button.clicked.connect(self.clear_3d_preview)
+        preview_layout.addWidget(self.preview_button)
+        preview_layout.addWidget(self.clear_preview_button)
+        preview_layout.addStretch(1)
+        layout.addWidget(preview_row)
+
         self.summary_label = QLabel("No structure yet.")
         self.summary_label.setWordWrap(True)
         layout.addWidget(self.summary_label)
@@ -198,6 +230,7 @@ class StructurePanel(QWidget):
             spin.valueChanged.connect(self._emit_changed)
         self.cif_edit.textChanged.connect(self._emit_changed)
         self.expand_check.toggled.connect(self._emit_changed)
+        self.primitive_check.toggled.connect(self._emit_changed)
         for spin in self.repeat_spins:
             spin.valueChanged.connect(self._emit_changed)
 
@@ -215,6 +248,7 @@ class StructurePanel(QWidget):
             "cubic_box": self.cubic_check.isChecked(),
             "cif_path": self.cif_edit.text(),
             "expand_symmetry": self.expand_check.isChecked(),
+            "primitive_cell": self.primitive_check.isChecked(),
             "supercell": [spin.value() for spin in self.repeat_spins],
         }
 
@@ -229,6 +263,7 @@ class StructurePanel(QWidget):
         self.cubic_check.setChecked(bool(settings.get("cubic_box", False)))
         self.cif_edit.setText(str(settings.get("cif_path", "") or ""))
         self.expand_check.setChecked(bool(settings.get("expand_symmetry", True)))
+        self.primitive_check.setChecked(bool(settings.get("primitive_cell", False)))
         repeats = settings.get("supercell") or [1, 1, 1]
         for spin, value in zip(self.repeat_spins, repeats):
             spin.setValue(max(1, int(value)))
@@ -265,6 +300,10 @@ class StructurePanel(QWidget):
                 padding=self.padding(),
                 cubic=self.cubic_check.isChecked(),
             )
+        if self.primitive_check.isChecked():
+            # Reduce first: a supercell of the primitive cell is what the user
+            # asked for, and reducing afterwards would just undo it.
+            cell = primitive_cell(cell)
         return make_supercell(cell, [spin.value() for spin in self.repeat_spins])
 
     def refresh_summary(self, cell=None, error: str = "") -> None:
@@ -285,6 +324,26 @@ class StructurePanel(QWidget):
             f"a={a:.4f} b={b:.4f} c={c:.4f} A, "
             f"alpha={alpha:.2f} beta={beta:.2f} gamma={gamma:.2f} deg, "
             f"V={cell.volume:.2f} A<sup>3</sup>"
+        )
+
+    # -- 3D preview -------------------------------------------------------
+
+    def preview_in_3d(self) -> None:
+        """Draw the current cell, box included, in MoleditPy's 3D view."""
+        try:
+            cell = self.build_cell()
+            self._preview_actors = cell_preview.show_cell(
+                self.context, cell, self._preview_actors
+            )
+        except (ValueError, OSError, AttributeError, ImportError, RuntimeError) as exc:
+            QMessageBox.warning(self, "3D preview", str(exc))
+            return
+        self.previewed.emit()
+
+    def clear_3d_preview(self) -> None:
+        """Remove the cell box.  Safe to call when nothing was drawn."""
+        self._preview_actors = cell_preview.clear_cell_box(
+            self.context, self._preview_actors
         )
 
     # -- internals --------------------------------------------------------
