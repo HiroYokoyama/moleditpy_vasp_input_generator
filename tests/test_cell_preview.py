@@ -14,7 +14,7 @@ from vasp_input_generator import cell_preview as cp  # noqa: E402
 
 def test_shared_module_identity():
     assert cp.SHARED_MODULE_NAME == "periodic-cell-preview"
-    assert cp.SHARED_MODULE_VERSION == "0.2.0"
+    assert cp.SHARED_MODULE_VERSION == "0.5.0"
 
 
 class FakePlotter:
@@ -250,12 +250,21 @@ class _SwitchingContext(FakeContext):
         self.entered += 1
 
 
-def test_show_cell_brings_the_3d_view_to_the_front(cell):
+def test_show_cell_brings_the_3d_view_to_the_front_for_a_crystal(cell):
     """Drawing into a hidden 3D view looks like nothing happened."""
+    pytest.importorskip("rdkit")
+    crystal = cm.Cell(cell.name, cell.lengths, cell.angles, cell.lattice, cell.atoms, source="cif")
+    context = _SwitchingContext(FakePlotter())
+    cp.show_cell(context, crystal)
+    assert context.entered == 1
+
+
+def test_a_molecule_preview_leaves_the_2d_editor_alone(cell):
+    """The molecule on screen is the one being edited; do not yank the view."""
     pytest.importorskip("rdkit")
     context = _SwitchingContext(FakePlotter())
     cp.show_cell(context, cell)
-    assert context.entered == 1
+    assert context.entered == 0
 
 
 def test_switching_to_3d_can_be_declined(cell):
@@ -269,3 +278,157 @@ def test_show_cell_works_on_a_host_without_the_switch(cell):
     """Older hosts have no enter_3d_viewer_mode; the preview must still work."""
     pytest.importorskip("rdkit")
     assert len(cp.show_cell(FakeContext(FakePlotter()), cell)) == 15
+
+
+# -- bond inference ---------------------------------------------------------
+
+
+def test_a_molecule_gets_its_bonds_without_being_asked(cell):
+    """An isolated molecule is whole, so its bonds are all real."""
+    pytest.importorskip("rdkit")
+    context = FakeContext(FakePlotter())
+    cp.show_cell(context, cell)
+    assert cell.source == "molecule"
+    assert context.current_molecule.GetNumBonds() == 2
+
+
+def test_a_crystal_gets_no_bonds_unless_asked(cell):
+    """A cell cut at its faces would draw bonds missing their partner."""
+    pytest.importorskip("rdkit")
+    crystal = cm.Cell(cell.name, cell.lengths, cell.angles, cell.lattice, cell.atoms, source="cif")
+    context = FakeContext(FakePlotter())
+    cp.show_cell(context, crystal)
+    assert context.current_molecule.GetNumBonds() == 0
+
+
+def test_bonds_can_be_forced_off_for_a_molecule(cell):
+    pytest.importorskip("rdkit")
+    context = FakeContext(FakePlotter())
+    cp.show_cell(context, cell, show_bonds=False)
+    assert context.current_molecule.GetNumBonds() == 0
+
+
+def test_the_defaults_follow_the_source(cell):
+    crystal = cm.Cell(cell.name, cell.lengths, cell.angles, cell.lattice, cell.atoms, source="cif")
+    assert cp.bonds_by_default(cell) and not cp.bonds_by_default(crystal)
+    assert cp.enters_3d_by_default(crystal) and not cp.enters_3d_by_default(cell)
+
+
+def test_bonds_are_drawn_when_asked_for(cell):
+    pytest.importorskip("rdkit")
+    context = FakeContext(FakePlotter())
+    cp.show_cell(context, cell, show_bonds=True)
+    assert context.current_molecule.GetNumBonds() == 2  # water
+
+
+def test_infer_bonds_uses_covalent_radii(cell):
+    assert sorted(cp.infer_bonds(cell)) == [(0, 1), (0, 2)]
+
+
+def test_infer_bonds_ignores_atoms_that_are_merely_near():
+    """Two oxygens 3 A apart are not bonded however close they look."""
+    lattice = cm.cell_vectors((12.0, 12.0, 12.0), (90.0, 90.0, 90.0))
+    far = cm.cell_from_molecule(["O", "O"], [[0.0, 0.0, 0.0], [3.0, 0.0, 0.0]], padding=5.0)
+    assert cp.infer_bonds(far) == []
+
+
+def test_infer_bonds_survives_a_heavy_element_pair():
+    """The CIF Viewer's old 2.45 A cap unbonded Pb-I at 3.17 A."""
+    cell = cm.cell_from_molecule(["Pb", "I"], [[0.0, 0.0, 0.0], [3.17, 0.0, 0.0]], padding=5.0)
+    assert cp.infer_bonds(cell) == [(0, 1)]
+
+
+def test_infer_bonds_drops_overlapping_sites():
+    """A duplicated site would otherwise 'bond' to itself."""
+    lattice = cm.cell_vectors((8.0, 8.0, 8.0), (90.0, 90.0, 90.0))
+    atoms = (
+        cm.CellAtom("C1", "C", np.zeros(3), np.zeros(3), 1.0),
+        cm.CellAtom("C2", "C", np.zeros(3), np.array([0.05, 0.0, 0.0]), 1.0),
+    )
+    cell = cm.Cell("x", (8.0,) * 3, (90.0,) * 3, lattice, atoms)
+    assert cp.infer_bonds(cell) == []
+
+
+def test_infer_bonds_skips_a_very_large_cell():
+    lattice = cm.cell_vectors((200.0, 200.0, 200.0), (90.0, 90.0, 90.0))
+    atoms = tuple(
+        cm.CellAtom(f"C{i}", "C", np.zeros(3), np.array([i * 1.5, 0.0, 0.0]), 1.0)
+        for i in range(2100)
+    )
+    cell = cm.Cell("big", (200.0,) * 3, (90.0,) * 3, lattice, atoms)
+    assert cp.infer_bonds(cell) == []
+
+
+def test_build_molecule_accepts_explicit_bonds(cell):
+    pytest.importorskip("rdkit")
+    molecule = cp.build_molecule(cell, [(0, 1)])
+    assert molecule.GetNumBonds() == 1
+
+
+# -- reaching the plotter through the main window ---------------------------
+
+
+def test_the_plotter_is_found_on_the_main_window(cell):
+    """Older hosts expose the plotter on the window rather than the context."""
+    plotter = FakePlotter()
+
+    class Window:
+        pass
+
+    window = Window()
+    window.plotter = plotter
+    assert cp.draw_cell_box(None, cell, main_window=window)
+
+
+def test_the_plotter_is_found_through_the_view_manager(cell):
+    plotter = FakePlotter()
+
+    class Window:
+        def __init__(self):
+            self.view_3d_manager = type("M", (), {"plotter": plotter})()
+
+    assert cp.draw_cell_box(None, cell, main_window=Window())
+
+
+def test_show_cell_falls_back_to_draw_molecule_3d(cell):
+    """A host with no current_molecule setter still gets the structure."""
+    pytest.importorskip("rdkit")
+    plotter = FakePlotter()
+    drawn = []
+
+    class Window:
+        def __init__(self):
+            self.plotter = plotter
+
+        def draw_molecule_3d(self, mol):
+            drawn.append(mol)
+
+    class BareContext:
+        def get_main_window(self):
+            return None
+
+    cp.show_cell(BareContext(), cell, main_window=Window())
+    assert drawn and drawn[0].GetNumAtoms() == len(cell.atoms)
+
+
+def test_show_cell_asks_the_context_for_the_window(cell):
+    """A context with no plotter but a main window must still be usable."""
+    pytest.importorskip("rdkit")
+    plotter = FakePlotter()
+    drawn = []
+
+    class Window:
+        def __init__(self):
+            self.plotter = plotter
+
+        def draw_molecule_3d(self, mol):
+            drawn.append(mol)
+
+    window = Window()
+
+    class WindowOnlyContext:
+        def get_main_window(self):
+            return window
+
+    cp.show_cell(WindowOnlyContext(), cell)
+    assert drawn

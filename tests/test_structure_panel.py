@@ -20,8 +20,8 @@ from test_cell_model import CUBIC_CIF, _FakeMol  # noqa: E402
     "module,name,version",
     [
         (cm, "periodic-cell-model", "0.7.0"),
-        (sp, "periodic-structure-panel", "0.7.0"),
-        (__import__("vasp_input_generator.elements", fromlist=["x"]), "periodic-elements", "0.1.0"),
+        (sp, "periodic-structure-panel", "0.11.0"),
+        (__import__("vasp_input_generator.elements", fromlist=["x"]), "periodic-elements", "0.2.0"),
     ],
 )
 def test_shared_module_identity(module, name, version):
@@ -261,6 +261,7 @@ def test_panel_settings_roundtrip(panel):
         "expand_symmetry": False,
         "primitive_cell": True,
         "auto_preview_3d": False,
+        "preview_bonds": True,
         "supercell": [2, 3, 4],
     }
     panel.apply_settings(settings)
@@ -319,9 +320,13 @@ class _RecordingContext:
         self.plotter = _RecordingPlotter()
         self.current_molecule = None
         self.shown = 0
+        self.entered = 0
 
     def get_main_window(self):
         return None
+
+    def enter_3d_viewer_mode(self):
+        self.entered += 1
 
     def reset_3d_camera(self):
         self.shown += 1
@@ -372,13 +377,47 @@ def test_auto_preview_can_be_switched_off(preview_panel):
     assert context.current_molecule is None
 
 
-def test_a_molecule_box_is_not_auto_previewed(qapp):
-    """Only a crystal arriving from a file counts as 'loaded'."""
+def test_a_molecule_box_is_auto_previewed_with_its_boundary(qapp):
+    """The vacuum box is exactly what the padding settings control, so show it."""
+    pytest.importorskip("rdkit")
     context = _RecordingContext()
     panel = sp.StructurePanel(get_molecule=lambda: _FakeMol(["H"], [[0.0, 0.0, 0.0]]), context=context)
     panel.source_combo.setCurrentText(sp.SOURCE_MOLECULE)
     panel.refresh_summary(panel.build_cell())
-    assert context.current_molecule is None
+    assert context.current_molecule is not None
+    assert len(context.plotter.lines) == 12
+    panel.deleteLater()
+
+
+def test_changing_the_padding_redraws_the_molecule_box(qapp):
+    pytest.importorskip("rdkit")
+    context = _RecordingContext()
+    panel = sp.StructurePanel(get_molecule=lambda: _FakeMol(["H"], [[0.0, 0.0, 0.0]]), context=context)
+    panel.source_combo.setCurrentText(sp.SOURCE_MOLECULE)
+    panel.refresh_summary(panel.build_cell())
+    panel.padding_spin.setValue(9.0)
+    panel.refresh_summary(panel.build_cell())
+    assert context.shown == 2
+    panel.deleteLater()
+
+
+def test_bonds_are_automatic_by_default(qapp):
+    """A whole molecule gets bonds; the same atoms as a crystal do not."""
+    pytest.importorskip("rdkit")
+    from PyQt6.QtCore import Qt
+
+    context = _RecordingContext()
+    panel = sp.StructurePanel(get_molecule=lambda: _FakeMol(
+        ["O", "H", "H"], [[0.0, 0.0, 0.0], [0.96, 0.0, 0.0], [-0.24, 0.93, 0.0]]), context=context)
+    panel.source_combo.setCurrentText(sp.SOURCE_MOLECULE)
+    assert panel.bond_choice() is None
+    panel.refresh_summary(panel.build_cell())
+    assert context.current_molecule.GetNumBonds() == 2
+
+    panel.bonds_check.setCheckState(Qt.CheckState.Unchecked)
+    assert panel.bond_choice() is False
+    panel.refresh_summary(panel.build_cell())
+    assert context.current_molecule.GetNumBonds() == 0
     panel.deleteLater()
 
 
@@ -466,3 +505,176 @@ def test_a_drag_carrying_a_cif_is_accepted(panel):
 
 def test_the_panel_accepts_drops(panel):
     assert panel.acceptDrops()
+
+
+# -- remaining panel paths --------------------------------------------------
+
+
+def test_the_panel_reduces_to_the_primitive_cell_when_asked(panel, tmp_path):
+    path = tmp_path / "bcc.cif"
+    path.write_text(CUBIC_CIF, encoding="utf-8")
+    panel.source_combo.setCurrentText(sp.SOURCE_CIF)
+    panel.cif_edit.setText(str(path))
+    assert len(panel.build_cell().atoms) == 2
+    panel.primitive_check.setChecked(True)
+    assert len(panel.build_cell().atoms) == 1
+
+
+def test_per_axis_padding_is_used_when_switched_on(panel):
+    panel.per_axis_check.setChecked(True)
+    for spin, value in zip(panel.axis_padding_spins, (1.0, 2.0, 3.0)):
+        spin.setValue(value)
+    assert panel.padding() == [1.0, 2.0, 3.0]
+
+
+def test_preview_button_reports_a_failure(panel, monkeypatch):
+    """A click that cannot draw must say why rather than do nothing."""
+    from PyQt6.QtWidgets import QMessageBox
+
+    seen = []
+    monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: seen.append(a))
+    panel.source_combo.setCurrentText(sp.SOURCE_CIF)
+    panel.cif_edit.setText("")
+    panel.preview_in_3d()
+    assert seen
+
+
+def test_preview_button_draws_and_signals(panel, tmp_path, qapp):
+    pytest.importorskip("rdkit")
+    path = tmp_path / "x.cif"
+    path.write_text(CUBIC_CIF, encoding="utf-8")
+    context = _RecordingContext()
+    panel.context = context
+    panel.source_combo.setCurrentText(sp.SOURCE_CIF)
+    panel.cif_edit.setText(str(path))
+    seen = []
+    panel.previewed.connect(lambda: seen.append(1))
+    panel.preview_in_3d()
+    assert seen and context.current_molecule is not None
+
+
+def test_clearing_the_preview_removes_the_box(panel, tmp_path):
+    pytest.importorskip("rdkit")
+    path = tmp_path / "x.cif"
+    path.write_text(CUBIC_CIF, encoding="utf-8")
+    context = _RecordingContext()
+    panel.context = context
+    panel.source_combo.setCurrentText(sp.SOURCE_CIF)
+    panel.cif_edit.setText(str(path))
+    panel.preview_in_3d()
+    panel.clear_3d_preview()
+    assert panel._preview_actors == []
+
+
+def test_a_drag_move_over_the_panel_follows_the_same_rule(panel):
+    event = _FakeDropEvent(_FakeMime(["/tmp/x.cif"]))
+    panel.dragMoveEvent(event)
+    assert event.accepted
+
+
+# -- CIF Viewer lookup ------------------------------------------------------
+
+
+def test_lookup_returns_none_without_a_window():
+    assert sp.find_cif_viewer_widget(None) is None
+
+
+def test_lookup_finds_the_panel_through_the_plugin_manager(qapp):
+    panel_widget = types.SimpleNamespace(structure=object())
+    window = types.SimpleNamespace(
+        plugin_manager=types.SimpleNamespace(
+            plugin_windows={"CIF Viewer": {"cif_viewer_panel": panel_widget}}
+        ),
+        findChildren=lambda _type: [],
+    )
+    assert sp.find_cif_viewer_widget(window) is panel_widget
+
+
+def test_lookup_unwraps_a_dock_widget(qapp):
+    inner = types.SimpleNamespace(structure=object())
+    dock = types.SimpleNamespace(structure=None, widget=lambda: inner)
+    window = types.SimpleNamespace(
+        plugin_manager=types.SimpleNamespace(plugin_windows={"CIF Viewer": {"p": dock}}),
+        findChildren=lambda _type: [],
+    )
+    assert sp.find_cif_viewer_widget(window) is inner
+
+
+def test_lookup_ignores_other_plugins(qapp):
+    window = types.SimpleNamespace(
+        plugin_manager=types.SimpleNamespace(
+            plugin_windows={"Other": {"p": types.SimpleNamespace(structure=object())}}
+        ),
+        findChildren=lambda _type: [],
+    )
+    assert sp.find_cif_viewer_widget(window) is None
+
+
+def test_lookup_survives_a_hostile_registry(qapp):
+    window = types.SimpleNamespace(
+        plugin_manager=types.SimpleNamespace(plugin_windows="not a dict"),
+        findChildren=lambda _type: [],
+    )
+    assert sp.find_cif_viewer_widget(window) is None
+    window = types.SimpleNamespace(
+        plugin_manager=types.SimpleNamespace(plugin_windows={"CIF Viewer": "not a dict"}),
+        findChildren=lambda _type: [],
+    )
+    assert sp.find_cif_viewer_widget(window) is None
+
+
+def test_lookup_falls_back_to_a_widget_scan(qapp):
+    from PyQt6.QtWidgets import QWidget
+
+    host = QWidget()
+
+    class CifViewerWidget(QWidget):
+        structure = object()
+
+    child = CifViewerWidget(host)
+    host.plugin_manager = None
+    assert sp.find_cif_viewer_widget(host) is child
+    host.deleteLater()
+
+
+def test_lookup_skips_a_window_that_holds_no_structure(qapp):
+    """A registered window without a .structure is not the CIF Viewer panel."""
+    bare = types.SimpleNamespace(structure=None, widget=lambda: None)
+    window = types.SimpleNamespace(
+        plugin_manager=types.SimpleNamespace(plugin_windows={"CIF Viewer": {"p": bare}}),
+        findChildren=lambda _type: [],
+    )
+    assert sp.find_cif_viewer_widget(window) is None
+
+
+def test_lookup_skips_a_none_window(qapp):
+    window = types.SimpleNamespace(
+        plugin_manager=types.SimpleNamespace(plugin_windows={"CIF Viewer": {"p": None}}),
+        findChildren=lambda _type: [],
+    )
+    assert sp.find_cif_viewer_widget(window) is None
+
+
+def test_the_button_never_switches_the_view_for_a_molecule(qapp):
+    """The molecule on screen is the one being edited; leave the 2D editor be."""
+    pytest.importorskip("rdkit")
+    context = _RecordingContext()
+    panel = sp.StructurePanel(get_molecule=lambda: _FakeMol(["H"], [[0.0, 0.0, 0.0]]), context=context)
+    panel.source_combo.setCurrentText(sp.SOURCE_MOLECULE)
+    panel.preview_in_3d()
+    assert context.entered == 0
+    assert context.current_molecule is not None
+    panel.deleteLater()
+
+
+def test_the_button_switches_the_view_for_a_crystal(qapp, tmp_path):
+    pytest.importorskip("rdkit")
+    path = tmp_path / "x.cif"
+    path.write_text(CUBIC_CIF, encoding="utf-8")
+    context = _RecordingContext()
+    panel = sp.StructurePanel(context=context)
+    panel.source_combo.setCurrentText(sp.SOURCE_CIF)
+    panel.cif_edit.setText(str(path))
+    panel.preview_in_3d()
+    assert context.entered == 1
+    panel.deleteLater()

@@ -135,3 +135,53 @@ def test_dialog_save_without_structure_warns(qapp, monkeypatch):
 def test_dialog_copy_preview(dialog, qapp):
     dialog.copy_preview()
     assert "INCAR" in qapp.clipboard().text()
+
+
+def DIALOG_FACTORY(context):
+    mol = _FakeMol(["O", "H", "H"], [[0, 0, 0], [0.96, 0, 0], [-0.24, 0.93, 0]])
+    return VaspInputDialog(persistent_settings=writer.default_settings(), get_molecule=lambda: mol, context=context)
+
+
+# -- drag and drop ----------------------------------------------------------
+
+
+def test_the_dialog_accepts_a_dropped_cif(dialog, tmp_path):
+    from test_structure_panel import _FakeDropEvent, _FakeMime
+
+    path = tmp_path / "dropped.cif"
+    path.write_text("data_x", encoding="utf-8")
+    assert dialog.acceptDrops()
+    event = _FakeDropEvent(_FakeMime([str(path)]))
+    dialog.dropEvent(event)
+    assert event.accepted
+    assert dialog.structure_panel.cif_edit.text() == str(path)
+
+
+def test_a_drag_without_a_cif_is_refused_by_the_dialog(dialog):
+    from test_structure_panel import _FakeDropEvent, _FakeMime
+
+    event = _FakeDropEvent(_FakeMime(["/tmp/notes.txt"]))
+    dialog.dragEnterEvent(event)
+    assert event.ignored and not event.accepted
+    dialog.dropEvent(event)
+    assert not event.accepted
+
+
+def test_a_drag_move_follows_the_same_rule(dialog):
+    from test_structure_panel import _FakeDropEvent, _FakeMime
+
+    event = _FakeDropEvent(_FakeMime(["/tmp/x.cif"]))
+    dialog.dragMoveEvent(event)
+    assert event.accepted
+
+
+def test_the_box_is_drawn_as_soon_as_the_dialog_opens(qapp):
+    """Opening the generator should show the cell, not an empty viewer."""
+    pytest.importorskip("rdkit")
+    from test_structure_panel import _RecordingContext
+
+    context = _RecordingContext()
+    dlg = DIALOG_FACTORY(context)
+    assert context.current_molecule is not None
+    assert len(context.plotter.lines) == 12
+    dlg.deleteLater()

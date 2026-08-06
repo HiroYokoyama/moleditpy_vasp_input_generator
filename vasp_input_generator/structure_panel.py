@@ -16,9 +16,9 @@ import logging
 import os
 
 SHARED_MODULE_NAME = "periodic-structure-panel"
-SHARED_MODULE_VERSION = "0.7.0"
+SHARED_MODULE_VERSION = "0.11.0"
 
-from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -229,6 +229,14 @@ class StructurePanel(QWidget):
         self.clear_preview_button = QPushButton("Clear box")
         self.clear_preview_button.setToolTip("Remove the cell box from the 3D view.")
         self.clear_preview_button.clicked.connect(self.clear_3d_preview)
+        self.bonds_check = QCheckBox("Bonds")
+        self.bonds_check.setTristate(True)
+        self.bonds_check.setCheckState(Qt.CheckState.PartiallyChecked)
+        self.bonds_check.setToolTip(
+            "Draw bonds inferred from covalent radii.\n"
+            "Off by default: a periodic cell is cut at its faces, so every bond "
+            "crossing a face is missing its partner and simply will not be drawn."
+        )
         self.auto_preview_check = QCheckBox("Show automatically when a CIF is loaded")
         self.auto_preview_check.setChecked(True)
         self.auto_preview_check.setToolTip(
@@ -237,6 +245,7 @@ class StructurePanel(QWidget):
         )
         preview_layout.addWidget(self.preview_button)
         preview_layout.addWidget(self.clear_preview_button)
+        preview_layout.addWidget(self.bonds_check)
         preview_layout.addWidget(self.auto_preview_check)
         preview_layout.addStretch(1)
         layout.addWidget(preview_row)
@@ -254,6 +263,7 @@ class StructurePanel(QWidget):
         self.cif_edit.textChanged.connect(self._emit_changed)
         self.expand_check.toggled.connect(self._emit_changed)
         self.primitive_check.toggled.connect(self._emit_changed)
+        self.bonds_check.toggled.connect(self._emit_changed)
         for spin in self.repeat_spins:
             spin.valueChanged.connect(self._emit_changed)
 
@@ -273,6 +283,7 @@ class StructurePanel(QWidget):
             "expand_symmetry": self.expand_check.isChecked(),
             "primitive_cell": self.primitive_check.isChecked(),
             "auto_preview_3d": self.auto_preview_check.isChecked(),
+            "preview_bonds": self.bond_choice(),
             "supercell": [spin.value() for spin in self.repeat_spins],
         }
 
@@ -289,6 +300,11 @@ class StructurePanel(QWidget):
         self.expand_check.setChecked(bool(settings.get("expand_symmetry", True)))
         self.primitive_check.setChecked(bool(settings.get("primitive_cell", False)))
         self.auto_preview_check.setChecked(bool(settings.get("auto_preview_3d", True)))
+        choice = settings.get("preview_bonds", None)
+        self.bonds_check.setCheckState(
+            Qt.CheckState.PartiallyChecked if choice is None
+            else (Qt.CheckState.Checked if choice else Qt.CheckState.Unchecked)
+        )
         repeats = settings.get("supercell") or [1, 1, 1]
         for spin, value in zip(self.repeat_spins, repeats):
             spin.setValue(max(1, int(value)))
@@ -357,6 +373,13 @@ class StructurePanel(QWidget):
 
     # -- drag and drop ----------------------------------------------------
 
+    def bond_choice(self):
+        """True/False when the user has decided, None to leave it automatic."""
+        state = self.bonds_check.checkState()
+        if state == Qt.CheckState.PartiallyChecked:
+            return None
+        return state == Qt.CheckState.Checked
+
     def load_cif_path(self, path: str) -> None:
         """Point the panel at a CIF, switching the source over to match.
 
@@ -387,11 +410,17 @@ class StructurePanel(QWidget):
     # -- 3D preview -------------------------------------------------------
 
     def preview_in_3d(self) -> None:
-        """Draw the current cell, box included, in MoleditPy's 3D view."""
+        """Draw the current cell, box included, in MoleditPy's 3D view.
+
+        The view is only brought to the front for a crystal.  A molecule in a
+        vacuum box is the one being edited, so the 2D editor is left in place
+        even when the button is pressed deliberately.
+        """
         try:
             cell = self.build_cell()
             self._preview_actors = cell_preview.show_cell(
-                self.context, cell, self._preview_actors
+                self.context, cell, self._preview_actors,
+                show_bonds=self.bond_choice(),
             )
         except (ValueError, OSError, AttributeError, ImportError, RuntimeError) as exc:
             QMessageBox.warning(self, "3D preview", str(exc))
@@ -408,15 +437,18 @@ class StructurePanel(QWidget):
         """
         if cell is None or not self.auto_preview_check.isChecked():
             return
-        if cell.source not in ("cif", "cif_viewer"):
-            return
-        key = (cell.name, cell.source, len(cell.atoms), tuple(round(v, 6) for v in cell.lengths))
+        # A molecule wrapped in a vacuum box is shown too: its boundary is
+        # exactly what the padding settings are there to control.
+        key = (cell.name, cell.source, len(cell.atoms),
+               tuple(round(v, 6) for v in cell.lengths),
+               self.bond_choice())
         if key == self._auto_previewed_key:
             return
         self._auto_previewed_key = key
         try:
             self._preview_actors = cell_preview.show_cell(
-                self.context, cell, self._preview_actors
+                self.context, cell, self._preview_actors,
+                show_bonds=self.bond_choice(),
             )
         except (ValueError, OSError, AttributeError, ImportError, RuntimeError) as exc:
             logging.debug("Automatic 3D preview skipped: %s", exc)

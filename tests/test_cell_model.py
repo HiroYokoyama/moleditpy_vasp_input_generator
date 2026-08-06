@@ -708,3 +708,299 @@ def test_lll_leaves_an_already_reduced_basis_alone():
     lattice = cm.cell_vectors((3.0, 4.0, 5.0), (90.0, 90.0, 90.0))
     reduced, _ = cm.lll_reduce(lattice)
     assert sorted(round(float(np.linalg.norm(row)), 6) for row in reduced) == [3.0, 4.0, 5.0]
+
+
+# -- guards and edge paths --------------------------------------------------
+
+
+def test_cell_elements_property():
+    cell = cm.parse_cif(CUBIC_CIF)
+    assert cell.elements == ("Fe", "Fe")
+
+
+def test_cell_vectors_rejects_a_zero_length():
+    with pytest.raises(ValueError, match="lengths must be positive"):
+        cm.cell_vectors((0.0, 1.0, 1.0), (90.0, 90.0, 90.0))
+
+
+def test_lattice_parameters_reject_a_zero_vector():
+    with pytest.raises(ValueError, match="zero length"):
+        cm.lattice_parameters(np.array([[0.0, 0.0, 0.0], [0, 1.0, 0], [0, 0, 1.0]]))
+
+
+def test_symmetry_operation_rejects_an_empty_component():
+    with pytest.raises(ValueError, match="Empty component"):
+        cm.parse_symmetry_operation("x, , z")
+
+
+def test_symmetry_operation_reads_a_numeric_coefficient():
+    rotation, _ = cm.parse_symmetry_operation("2x, y, z")
+    assert rotation[0, 0] == pytest.approx(2.0)
+
+
+def test_a_broken_symmetry_row_is_skipped_not_fatal():
+    text = CUBIC_CIF.replace("'x, y, z'", "'x, y, z'\n'nonsense'")
+    assert len(cm.parse_cif(text).atoms) == 2
+
+
+def test_spacegroup_operations_without_a_symbol():
+    assert cm._spacegroup_operations(None) == []
+
+
+def test_parse_cif_number_falls_through_to_float():
+    assert cm.parse_cif_number("1e3") == pytest.approx(1000.0)
+
+
+def test_a_tag_whose_value_is_on_the_next_line():
+    text = CUBIC_CIF.replace("_cell_length_a 4.0", "_cell_length_a\n4.0")
+    assert cm.parse_cif(text).lengths[0] == pytest.approx(4.0)
+
+
+def test_a_semicolon_text_field_is_read_as_one_value():
+    text = CUBIC_CIF.replace(
+        "data_test", "data_test\n_chemical_name\n;\nsome long\nname\n;"
+    )
+    assert len(cm.parse_cif(text).atoms) == 2
+
+
+def test_an_unreadable_occupancy_is_dropped_not_fatal():
+    text = CUBIC_CIF.replace(
+        "_atom_site_fract_z\nFe1 Fe 0.0 0.0 0.0",
+        "_atom_site_fract_z\n_atom_site_occupancy\nFe1 Fe 0.0 0.0 0.0 ?",
+    )
+    cell = cm.parse_cif(text)
+    assert cell.atoms[0].occupancy is None
+
+
+def test_a_space_group_tag_of_question_mark_is_ignored():
+    text = CUBIC_CIF.replace("'I m -3 m'", "?")
+    assert cm.parse_cif(text).space_group is None
+
+
+def test_a_cif_without_a_space_group_tag():
+    text = "\n".join(
+        line for line in CUBIC_CIF.splitlines() if "space_group" not in line
+    )
+    assert cm.parse_cif(text).space_group is None
+
+
+def test_cell_from_molecule_rejects_a_bad_padding_shape():
+    with pytest.raises(ValueError, match="three numbers"):
+        cm.cell_from_molecule(["H"], [[0.0, 0.0, 0.0]], padding=[1.0, 2.0])
+
+
+def test_molecule_arrays_rejects_an_empty_molecule():
+    class _Empty:
+        def GetNumAtoms(self):
+            return 0
+
+        def GetConformer(self):
+            return None
+
+    with pytest.raises(ValueError, match="no atoms"):
+        cm.molecule_arrays(_Empty())
+
+
+def test_molecule_arrays_rejects_none():
+    with pytest.raises(ValueError, match="No molecule"):
+        cm.molecule_arrays(None)
+
+
+# -- charge and multiplicity ------------------------------------------------
+
+
+class _ChargedAtom:
+    def __init__(self, charge=0, radicals=0):
+        self._charge, self._radicals = charge, radicals
+
+    def GetFormalCharge(self):
+        return self._charge
+
+    def GetNumRadicalElectrons(self):
+        return self._radicals
+
+
+class _ChargedMol:
+    def __init__(self, atoms):
+        self._atoms = atoms
+
+    def GetNumAtoms(self):
+        return len(self._atoms)
+
+    def GetAtomWithIdx(self, index):
+        return self._atoms[index]
+
+
+def test_charge_and_multiplicity_of_a_closed_shell():
+    assert cm.molecule_charge_and_multiplicity(_ChargedMol([_ChargedAtom()])) == (0, 1)
+
+
+def test_charge_and_multiplicity_of_a_radical_anion():
+    mol = _ChargedMol([_ChargedAtom(charge=-1, radicals=1), _ChargedAtom()])
+    assert cm.molecule_charge_and_multiplicity(mol) == (-1, 2)
+
+
+def test_charge_and_multiplicity_ignores_an_atom_that_cannot_answer():
+    class _Mute:
+        def GetFormalCharge(self):
+            raise AttributeError
+
+        def GetNumRadicalElectrons(self):
+            raise TypeError
+
+    assert cm.molecule_charge_and_multiplicity(_ChargedMol([_Mute()])) == (0, 1)
+
+
+def test_charge_and_multiplicity_rejects_none():
+    with pytest.raises(ValueError, match="No molecule"):
+        cm.molecule_charge_and_multiplicity(None)
+
+
+# -- write_cif --------------------------------------------------------------
+
+
+def test_write_cif_round_trips_through_the_parser():
+    cell = cm.parse_cif(CUBIC_CIF)
+    reparsed = cm.parse_cif(cm.write_cif(cell))
+    assert len(reparsed.atoms) == len(cell.atoms)
+    assert reparsed.lengths == pytest.approx(cell.lengths)
+
+
+def test_write_cif_names_the_data_block():
+    text = cm.write_cif(cm.parse_cif(CUBIC_CIF), name="my cell")
+    assert text.startswith("data_my_cell")
+
+
+def test_write_cif_defaults_the_occupancy():
+    lattice = cm.cell_vectors((4.0, 4.0, 4.0), (90.0, 90.0, 90.0))
+    atoms = (cm.CellAtom("Fe1", "Fe", np.zeros(3), np.zeros(3), None),)
+    text = cm.write_cif(cm.Cell("x", (4.0,) * 3, (90.0,) * 3, lattice, atoms))
+    assert "1.0000" in text
+
+
+# -- translation symmetry guards --------------------------------------------
+
+
+def test_translation_symmetries_skip_a_huge_cell():
+    lattice = cm.cell_vectors((500.0, 500.0, 500.0), (90.0, 90.0, 90.0))
+    atoms = tuple(
+        cm.CellAtom(f"C{i}", "C", np.array([i / 500.0, 0.0, 0.0]), np.zeros(3), 1.0)
+        for i in range(500)
+    )
+    cell = cm.Cell("big", (500.0,) * 3, (90.0,) * 3, lattice, atoms)
+    assert cm.translation_symmetries(cell) == []
+
+
+def test_translation_symmetries_need_two_atoms():
+    cell = cm.parse_cif(CUBIC_CIF.replace("'x+1/2, y+1/2, z+1/2'", "'x, y, z'"))
+    assert cm.translation_symmetries(cell) == []
+
+
+def test_primitive_transformation_is_none_without_translations():
+    cell = cm.parse_cif(CUBIC_CIF.replace("'x+1/2, y+1/2, z+1/2'", "'x, y, z'"))
+    assert cm.primitive_transformation(cell) is None
+
+
+def test_parse_cif_number_accepts_what_the_esd_pattern_rejects():
+    assert cm.parse_cif_number("1_000") == pytest.approx(1000.0)
+
+
+def test_a_site_row_with_neither_fractional_nor_cartesian_columns_is_skipped():
+    text = CUBIC_CIF.replace("_atom_site_fract_x\n_atom_site_fract_y\n_atom_site_fract_z\n",
+                             "_atom_site_u_iso\n_atom_site_b_iso\n_atom_site_wyckoff\n")
+    with pytest.raises(ValueError, match="readable atom positions"):
+        cm.parse_cif(text)
+
+
+def test_a_candidate_translation_that_does_not_map_the_cell_is_rejected():
+    """Two unlike sublattices look centred until every atom is checked."""
+    lattice = cm.cell_vectors((4.0, 4.0, 4.0), (90.0, 90.0, 90.0))
+    fract = [[0.0, 0.0, 0.0], [0.5, 0.5, 0.5], [0.25, 0.0, 0.0]]
+    atoms = tuple(
+        cm.CellAtom(f"Fe{i}", "Fe", np.array(f), cm.fractional_to_cartesian(f, lattice), 1.0)
+        for i, f in enumerate(fract)
+    )
+    cell = cm.Cell("x", (4.0,) * 3, (90.0,) * 3, lattice, atoms)
+    # (1/2,1/2,1/2) would map atoms 0 and 1 but leaves atom 2 with no partner.
+    assert all(not np.allclose(shift, [0.5, 0.5, 0.5]) for shift in cm.translation_symmetries(cell))
+
+
+def test_duplicate_candidate_translations_are_only_tried_once():
+    """A 2x1x1 supercell offers the same shift from several atoms."""
+    cell = cm.parse_cif(CUBIC_CIF)
+    doubled = cm.make_supercell(cell, [2, 1, 1])
+    found = cm.translation_symmetries(doubled)
+    for index, shift in enumerate(found):
+        for other in found[index + 1:]:
+            assert not np.allclose(shift, other, atol=1e-4)
+
+
+def test_primitive_transformation_rejects_a_non_integer_multiplicity():
+    """A basis has to divide the cell a whole number of times."""
+    lattice = cm.cell_vectors((6.0, 6.0, 6.0), (90.0, 90.0, 90.0))
+    fract = [[0.0, 0.0, 0.0], [1.0 / 3.0, 0.0, 0.0], [2.0 / 3.0, 0.0, 0.0]]
+    atoms = tuple(
+        cm.CellAtom(f"C{i}", "C", np.array(f), cm.fractional_to_cartesian(f, lattice), 1.0)
+        for i, f in enumerate(fract)
+    )
+    cell = cm.Cell("x", (6.0,) * 3, (90.0,) * 3, lattice, atoms)
+    matrix = cm.primitive_transformation(cell)
+    assert matrix is None or abs(round(1 / abs(np.linalg.det(matrix))) - 1 / abs(np.linalg.det(matrix))) < 1e-6
+
+
+def test_primitive_cell_keeps_a_cell_it_cannot_divide_evenly():
+    """A near-miss translation must not be allowed to delete atoms."""
+    lattice = cm.cell_vectors((4.0, 4.0, 4.0), (90.0, 90.0, 90.0))
+    fract = [[0.0, 0.0, 0.0], [0.5, 0.5, 0.5], [0.2, 0.2, 0.2]]
+    atoms = tuple(
+        cm.CellAtom(f"Fe{i}", "Fe", np.array(f), cm.fractional_to_cartesian(f, lattice), 1.0)
+        for i, f in enumerate(fract)
+    )
+    cell = cm.Cell("x", (4.0,) * 3, (90.0,) * 3, lattice, atoms)
+    assert len(cm.primitive_cell(cell).atoms) == 3
+
+
+def test_atomic_number_and_is_known():
+    from vasp_input_generator import elements
+
+    assert elements.atomic_number("Fe") == 26
+    assert elements.atomic_number("Xx") is None
+    assert elements.is_known("O") and not elements.is_known("Xx")
+
+
+def _cell_of(fract_occ, length=4.0):
+    lattice = cm.cell_vectors((length,) * 3, (90.0,) * 3)
+    atoms = tuple(
+        cm.CellAtom(f"Fe{i}", "Fe", np.array(f, dtype=float),
+                    cm.fractional_to_cartesian(f, lattice), occ)
+        for i, (f, occ) in enumerate(fract_occ)
+    )
+    return cm.Cell("x", (length,) * 3, (90.0,) * 3, lattice, atoms)
+
+
+def test_a_translation_must_match_occupancies_atom_by_atom():
+    """Half-occupied sites map onto half-occupied ones, not onto full ones."""
+    cell = _cell_of([
+        ([0.0, 0.0, 0.0], 1.0),
+        ([0.5, 0.5, 0.5], 1.0),
+        ([0.25, 0.25, 0.25], 0.5),
+        ([0.75, 0.75, 0.75], 0.5),
+    ])
+    found = cm.translation_symmetries(cell)
+    assert any(np.allclose(shift, [0.5, 0.5, 0.5]) for shift in found)
+
+
+def test_a_duplicate_site_offers_no_translation():
+    """An atom sitting on atom 0 gives a zero shift, which is not a symmetry."""
+    cell = _cell_of([([0.0, 0.0, 0.0], 1.0), ([0.0, 0.0, 0.0], 1.0)])
+    assert cm.translation_symmetries(cell) == []
+
+
+def test_two_coincident_sites_are_only_tried_once():
+    cell = _cell_of([
+        ([0.0, 0.0, 0.0], 1.0),
+        ([0.5, 0.5, 0.5], 1.0),
+        ([0.5, 0.5, 0.5], 1.0),
+    ])
+    found = cm.translation_symmetries(cell)
+    assert len(found) == len({tuple(np.round(s, 4)) for s in found})

@@ -19,12 +19,14 @@ loudly.
 from __future__ import annotations
 
 SHARED_MODULE_NAME = "periodic-cell-preview"
-SHARED_MODULE_VERSION = "0.2.0"
+SHARED_MODULE_VERSION = "0.5.0"
 
 import logging
 from typing import List, Optional, Sequence
 
 import numpy as np
+
+from .elements import bond_cutoff
 
 #: Actor names are namespaced so clearing never touches another plugin's overlay.
 ACTOR_PREFIX = "periodic_cell_preview"
@@ -70,12 +72,53 @@ def cell_segments(lattice):
     return segments
 
 
+def infer_bonds(cell, tolerance: float = 0.45, limit: int = 2000):
+    """(i, j) pairs closer than the sum of their covalent radii + ``tolerance``.
+
+    Distance-based on purpose.  RDKit's own perception works from valences and
+    routinely fails on a periodic cell, whose contents are cut at the faces and
+    so full of atoms with a fraction of their neighbours.  Bonds are not
+    followed across the boundary either, for the same reason: the partner is in
+    the next image, not in this list.  Matches the rule the CIF Viewer uses.
+    """
+    atoms = cell.atoms
+    count = len(atoms)
+    if count < 2 or count > int(limit):
+        return []
+
+    positions = np.array([atom.cart for atom in atoms], dtype=float)
+    elements = [atom.element for atom in atoms]
+    radii = np.array([bond_cutoff(element, element, 0.0) / 2.0 for element in elements])
+
+    rows, columns = np.triu_indices(count, k=1)
+    delta = positions[rows] - positions[columns]
+    squared = np.einsum("ij,ij->i", delta, delta)
+    cutoff = radii[rows] + radii[columns] + float(tolerance)
+    # The 0.25 A floor drops overlapping images that would otherwise "bond".
+    hits = np.nonzero((squared <= cutoff * cutoff) & (squared >= 0.0625))[0]
+    return [(int(rows[index]), int(columns[index])) for index in hits]
+
+
+def enters_3d_by_default(cell) -> bool:
+    """False for a molecule in a vacuum box, which the user is probably editing."""
+    return getattr(cell, "source", "") != "molecule"
+
+
+def bonds_by_default(cell) -> bool:
+    """True for a molecule boxed in vacuum, False for a periodic structure.
+
+    An isolated molecule is complete, so drawing its bonds is simply right; a
+    crystal or slab is cut at its faces, where bonds lose their partner.
+    """
+    return getattr(cell, "source", "") == "molecule"
+
+
 def build_molecule(cell, bonds: Optional[Sequence] = None):
     """An RDKit molecule holding the cell's atoms at their Cartesian positions.
 
-    No bonds are perceived: a periodic cell is cut at its faces, so any bonding
-    guessed inside it would be wrong at every boundary.  The host draws the
-    atoms as spheres, which is what a structure preview wants anyway.
+    Bonds are optional and off by default: a periodic cell is cut at its faces,
+    so every bond crossing a face is missing its partner.  The host draws
+    bond-less atoms as spheres, which is a fair picture of a crystal.
     """
     from rdkit import Chem
     from rdkit.Geometry import Point3D
@@ -212,12 +255,20 @@ def show_cell(
     cell,
     actor_names: Sequence[str] = (),
     main_window=None,
-    enter_3d: bool = True,
+    enter_3d: Optional[bool] = None,
+    show_bonds: Optional[bool] = None,
 ) -> List[str]:
     """Put the cell in the host's 3D view: atoms first, then the box.
 
     ``enter_3d`` brings the 3D view to the front, which is what makes the
-    preview visible when the app is sitting in the 2D editor.
+    preview visible when the app is sitting in the 2D editor.  Left automatic it
+    does that for a crystal but not for a molecule boxed in vacuum: that
+    molecule is the one being edited, and yanking the user out of the 2D editor
+    mid-edit is not a fair trade for a preview they did not ask for.
+
+    ``show_bonds`` defaults to :func:`bonds_by_default`: a molecule in a vacuum
+    box is whole, so its bonds are all real, while a crystal is cut at its faces
+    and every bond crossing one would be missing its partner.
 
     Raises ValueError if the cell cannot be shown, so the caller can report it.
     """
@@ -231,7 +282,8 @@ def show_cell(
             "cell. Switch to the 3D viewer and try again."
         )
 
-    molecule = build_molecule(cell)
+    wanted = bonds_by_default(cell) if show_bonds is None else bool(show_bonds)
+    molecule = build_molecule(cell, infer_bonds(cell) if wanted else None)
     if context is not None and hasattr(context, "current_molecule"):
         # Assigning current_molecule (rather than calling draw_molecule_3d)
         # keeps the host's own record in step, so later style changes redraw
@@ -249,7 +301,8 @@ def show_cell(
 
     # Drawing into the 3D view is pointless while the app is showing the 2D
     # editor, so bring that view to the front.
-    if enter_3d and context is not None and hasattr(context, "enter_3d_viewer_mode"):
+    enter = enters_3d_by_default(cell) if enter_3d is None else bool(enter_3d)
+    if enter and context is not None and hasattr(context, "enter_3d_viewer_mode"):
         try:
             context.enter_3d_viewer_mode()
         except Exception as exc:  # pragma: no cover - host API guard

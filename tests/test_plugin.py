@@ -65,7 +65,7 @@ def context():
 
 def test_plugin_metadata():
     assert plugin.PLUGIN_NAME == "VASP Input Generator"
-    assert plugin.PLUGIN_VERSION == "0.5.0"
+    assert plugin.PLUGIN_VERSION == "0.6.0"
     assert plugin.PLUGIN_AUTHOR == "HiroYokoyama"
     assert plugin.PLUGIN_CATEGORY == "Export"
     assert plugin.PLUGIN_DEPENDENCIES == ["numpy", "pyvista", "rdkit"]
