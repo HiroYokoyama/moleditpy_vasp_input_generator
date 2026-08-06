@@ -381,3 +381,182 @@ def test_looks_like_slab_never_fires_for_a_molecule_box():
 
 def test_looks_like_slab_trusts_an_explicit_slab_source():
     assert cm.looks_like_slab(_layered_cell(4.0, [0.0, 2.0], source="slab"))
+
+
+# -- reciprocal lattice / k-mesh -------------------------------------------
+
+
+def test_reciprocal_lengths_invert_an_orthogonal_cell():
+    lattice = cm.cell_vectors((4.0, 5.0, 6.0), (90.0, 90.0, 90.0))
+    assert cm.reciprocal_lengths(lattice) == pytest.approx((0.25, 0.2, 1.0 / 6.0))
+
+
+def test_reciprocal_lengths_are_not_one_over_a_when_the_cell_is_hexagonal():
+    """|b1| = 1/(a sin(gamma)), which is what the k-mesh must follow."""
+    lattice = cm.cell_vectors((3.0, 3.0, 5.0), (90.0, 90.0, 120.0))
+    b1, b2, b3 = cm.reciprocal_lengths(lattice)
+    expected = 1.0 / (3.0 * math.sin(math.radians(120.0)))
+    assert b1 == pytest.approx(expected)
+    assert b2 == pytest.approx(expected)
+    assert b3 == pytest.approx(0.2)
+    assert b1 > 1.0 / 3.0  # the direct length would under-sample by 15%
+
+
+def test_reciprocal_lengths_reject_a_flat_cell():
+    with pytest.raises(ValueError):
+        cm.reciprocal_lengths(np.array([[1.0, 0, 0], [2.0, 0, 0], [0, 0, 1.0]]))
+
+
+def test_kpoint_mesh_uses_the_reciprocal_lattice_for_a_hexagonal_cell():
+    lengths, angles = (3.0, 3.0, 5.0), (90.0, 90.0, 120.0)
+    lattice = cm.cell_vectors(lengths, angles)
+    cell = cm.Cell("hex", lengths, angles, lattice, (cm.CellAtom("C1", "C", np.zeros(3), np.zeros(3)),))
+    # 1/(3 * 0.05) = 6.67 -> 7 from the direct length; the reciprocal one gives 8.
+    assert cm.kpoint_mesh_from_density(cell, 0.05)[:2] == (8, 8)
+
+
+def test_kpoint_mesh_matches_the_exact_ratio_without_rounding_up():
+    cell = cm.parse_cif(CUBIC_CIF)  # 4 A cube, |b| = 0.25
+    assert cm.kpoint_mesh_from_density(cell, 0.25) == (1, 1, 1)
+    assert cm.kpoint_mesh_from_density(cell, 0.125) == (2, 2, 2)
+
+
+# -- structure audit -------------------------------------------------------
+
+
+def _cell_with(atoms, lengths=(6.0, 6.0, 6.0), angles=(90.0, 90.0, 90.0), **kwargs):
+    lattice = cm.cell_vectors(lengths, angles)
+    built = []
+    for label, element, fract, occupancy in atoms:
+        fract = np.asarray(fract, dtype=float)
+        built.append(
+            cm.CellAtom(label, element, fract, cm.fractional_to_cartesian(fract, lattice), occupancy)
+        )
+    return cm.Cell("test", lengths, angles, lattice, tuple(built), **kwargs)
+
+
+def test_minimum_image_distance_crosses_the_cell_boundary():
+    lattice = cm.cell_vectors((5.0, 5.0, 5.0), (90.0, 90.0, 90.0))
+    # 0.05 and 0.95 are 0.5 A apart through the boundary, not 4.5 A across the cell.
+    assert cm.minimum_image_distance([0.05, 0, 0], [0.95, 0, 0], lattice) == pytest.approx(0.5)
+
+
+def test_close_contacts_finds_overlapping_symmetry_images():
+    cell = _cell_with(
+        [("Fe1", "Fe", [0.0, 0.0, 0.0], 1.0), ("Fe1", "Fe", [0.01, 0.0, 0.0], 1.0)]
+    )
+    contacts = cm.close_contacts(cell)
+    assert len(contacts) == 1
+    assert contacts[0][2] == pytest.approx(0.06)
+
+
+def test_close_contacts_leaves_a_normal_bond_alone():
+    cell = cm.cell_from_molecule(["O", "H"], [[0, 0, 0], [0.96, 0, 0]], padding=6.0)
+    assert cm.close_contacts(cell) == []
+
+
+def test_close_contacts_skips_a_cell_that_is_too_large():
+    atoms = [(f"C{i}", "C", [i / 600.0, 0.0, 0.0], 1.0) for i in range(600)]
+    assert cm.close_contacts(_cell_with(atoms)) == []
+
+
+def test_partial_occupancy_sites_reports_only_the_disordered_ones():
+    cell = _cell_with(
+        [("Fe1", "Fe", [0.0, 0.0, 0.0], 0.5), ("O1", "O", [0.5, 0.5, 0.5], 1.0)]
+    )
+    assert cm.partial_occupancy_sites(cell) == [("Fe1", "Fe", 0.5)]
+
+
+def test_structure_warnings_are_silent_for_a_clean_cell():
+    assert cm.structure_warnings(cm.parse_cif(CUBIC_CIF)) == []
+
+
+def test_structure_warnings_flag_a_left_handed_lattice():
+    lattice = np.array([[4.0, 0, 0], [0, 4.0, 0], [0, 0, -4.0]])
+    cell = cm.Cell("lh", (4.0, 4.0, 4.0), (90.0, 90.0, 90.0), lattice, ())
+    assert any("left-handed" in message for message in cm.structure_warnings(cell))
+
+
+def test_structure_warnings_flag_a_flat_lattice():
+    lattice = np.array([[4.0, 0, 0], [8.0, 0, 0], [0, 0, 4.0]])
+    cell = cm.Cell("flat", (4.0, 8.0, 4.0), (90.0, 90.0, 90.0), lattice, ())
+    assert any("no volume" in message for message in cm.structure_warnings(cell))
+
+
+def test_structure_warnings_flag_partial_occupancy():
+    cell = _cell_with([("Fe1", "Fe", [0.0, 0.0, 0.0], 0.5)], source="cif")
+    assert any("partially occupied" in message for message in cm.structure_warnings(cell))
+
+
+def test_structure_warnings_flag_overlapping_atoms():
+    cell = _cell_with(
+        [("Fe1", "Fe", [0.0, 0.0, 0.0], 1.0), ("Fe2", "Fe", [0.01, 0.0, 0.0], 1.0)],
+        source="cif",
+    )
+    assert any("closer than" in message for message in cm.structure_warnings(cell))
+
+
+def test_structure_warnings_flag_a_non_element():
+    cell = _cell_with([("Q1", "Q", [0.0, 0.0, 0.0], 1.0)], source="cif")
+    assert any("Not chemical elements" in message for message in cm.structure_warnings(cell))
+
+
+def test_structure_warnings_flag_an_unexpandable_space_group():
+    """A CIF that names a space group but lists no operations is half a cell.
+
+    The symbol is deliberately unresolvable so the test does not depend on
+    whether the optional pymatgen fallback is installed.
+    """
+    text = CUBIC_CIF.replace("loop_\n_symmetry_equiv_pos_as_xyz\n'x, y, z'\n'x+1/2, y+1/2, z+1/2'\n", "")
+    text = text.replace("'I m -3 m'", "'Not a group'")
+    cell = cm.parse_cif(text)
+    assert cell.symmetry_operations == 1
+    assert any("no symmetry operations" in message for message in cm.structure_warnings(cell))
+
+
+def test_structure_warnings_flag_expansion_that_was_switched_off():
+    cell = cm.parse_cif(CUBIC_CIF, expand=False)
+    assert cell.symmetry_operations == 0
+    assert any("switched off" in message for message in cm.structure_warnings(cell))
+
+
+def test_structure_warnings_stay_quiet_for_a_p1_cif():
+    text = CUBIC_CIF.replace("'I m -3 m'", "'P 1'")
+    assert cm.structure_warnings(cm.parse_cif(text, expand=False)) == []
+
+
+# -- CIF robustness --------------------------------------------------------
+
+
+def test_parse_cif_records_the_operation_count():
+    assert cm.parse_cif(CUBIC_CIF).symmetry_operations == 2
+
+
+def test_parse_cif_skips_a_row_with_unreadable_coordinates():
+    """One '?' site must not take the whole file down with it."""
+    text = CUBIC_CIF.replace("Fe1 Fe 0.0 0.0 0.0", "Fe1 Fe 0.0 0.0 0.0\nO1 O ? ? ?")
+    cell = cm.parse_cif(text)
+    assert [atom.element for atom in cell.atoms] == ["Fe", "Fe"]
+
+
+def test_parse_cif_wraps_positions_even_without_expansion():
+    text = CUBIC_CIF.replace("Fe1 Fe 0.0 0.0 0.0", "Fe1 Fe -0.25 1.25 0.0")
+    cell = cm.parse_cif(text, expand=False)
+    assert np.allclose(cell.atoms[0].fract, [0.75, 0.25, 0.0])
+    assert np.allclose(cell.atoms[0].cart, [3.0, 1.0, 0.0])
+
+
+def test_normalize_element_falls_back_when_two_letters_are_not_an_element():
+    assert cm.normalize_element("OW1") == "O"     # a water oxygen label
+    assert cm.normalize_element("Cl2") == "Cl"    # a real two-letter element stays
+    assert cm.normalize_element("Zz") == "Zz"     # nothing sensible to fall back to
+
+
+def test_is_element():
+    assert cm.is_element("Fe")
+    assert not cm.is_element("Ow")
+
+
+def test_make_supercell_keeps_the_operation_count():
+    cell = cm.make_supercell(cm.parse_cif(CUBIC_CIF), [2, 1, 1])
+    assert cell.symmetry_operations == 2

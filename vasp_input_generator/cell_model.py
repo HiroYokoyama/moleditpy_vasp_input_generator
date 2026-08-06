@@ -6,18 +6,20 @@ differences: symmetry operations are parsed from the CIF's own
 ``_symmetry_equiv_pos_as_xyz`` loop so pymatgen stays optional, and the
 crystallographic metadata the viewer carries for display is dropped.
 
-SHARED FILE.  A byte-identical copy lives in every periodic input generator
-plugin (VASP / Quantum ESPRESSO / CP2K).  Bump ``SHARED_MODULE_VERSION`` on any
-change and copy the file to the other plugins; each plugin's test suite pins the
-version it expects, so a stale copy fails loudly.
+SHARED FILE.  A byte-identical copy lives in every periodic plugin (VASP /
+Quantum ESPRESSO / CP2K input generators and the Slab Builder).  Bump
+``SHARED_MODULE_VERSION`` on any change and copy the file to the other plugins;
+each plugin's test suite pins the version it expects, so a stale copy fails
+loudly.
 """
 
 from __future__ import annotations
 
 SHARED_MODULE_NAME = "periodic-cell-model"
-SHARED_MODULE_VERSION = "0.5.0"
+SHARED_MODULE_VERSION = "0.6.0"
 
 from dataclasses import dataclass
+import itertools
 import math
 import re
 import shlex
@@ -25,8 +27,17 @@ from typing import Dict, Iterable, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 
+try:  # the two shared files always ship together
+    from .elements import SYMBOLS as _ELEMENT_SYMBOLS
+except ImportError:  # pragma: no cover - keeps this module usable standalone
+    _ELEMENT_SYMBOLS = ()
+_KNOWN_ELEMENTS = frozenset(_ELEMENT_SYMBOLS)
+
 # Two symmetry images closer than this (Angstrom) are the same site.
 _DUPLICATE_TOL_SQ = 0.0025
+
+# The minimum image of a pair is always among the 27 nearest lattice translations.
+_NEIGHBOUR_SHIFTS = np.array(list(itertools.product((-1, 0, 1), repeat=3)), dtype=float)
 
 _UNCERTAINTY_RE = re.compile(
     r"^([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[Ee][+-]?\d+)?)(?:\(\d+\))?$"
@@ -68,6 +79,9 @@ class Cell:
     atoms: Tuple[CellAtom, ...]
     space_group: Optional[str] = None
     source: str = "cif"
+    #: Symmetry operations applied to reach this cell; 0 means expansion was
+    #: skipped, 1 means none were found.  Anything above 1 came from the CIF.
+    symmetry_operations: int = 1
 
     @property
     def volume(self) -> float:
@@ -277,11 +291,28 @@ def apply_symmetry(
 
 
 def normalize_element(value: str) -> str:
+    """Element symbol from a CIF type symbol or a site label.
+
+    ``Fe2+`` gives Fe and ``O1`` gives O.  A two-letter head that is not an
+    element falls back to its first letter, so a water oxygen labelled ``OW1``
+    reads as O rather than as the non-existent element "Ow".
+    """
     match = re.match(r"([A-Za-z]{1,2})", str(value).strip())
     if not match:
         return "X"
     raw = match.group(1)
-    return raw[0].upper() + raw[1:].lower()
+    symbol = raw[0].upper() + raw[1:].lower()
+    if len(symbol) == 2 and _KNOWN_ELEMENTS and symbol not in _KNOWN_ELEMENTS:
+        if symbol[0] in _KNOWN_ELEMENTS:
+            return symbol[0]
+    return symbol
+
+
+def is_element(symbol: str) -> bool:
+    """False for a placeholder the CIF invented (``X``, ``Zz``, a disorder tag)."""
+    if not _KNOWN_ELEMENTS:  # pragma: no cover - only without elements.py
+        return True
+    return str(symbol).strip() in _KNOWN_ELEMENTS
 
 
 def parse_cif_number(value: str) -> float:
@@ -419,17 +450,22 @@ def _atoms_from_loop(rows, lattice: np.ndarray) -> List[CellAtom]:
             row.get("_atom_site.type_symbol") or row.get("_atom_site.label") or label
         )
 
-        if all(key in row for key in _FRACT_KEYS):
-            fract = np.array(
-                [parse_cif_number(row[key]) for key in _FRACT_KEYS], dtype=float
-            )
-            cart = fractional_to_cartesian(fract, lattice)
-        elif all(key in row for key in _CART_KEYS):
-            cart = np.array(
-                [parse_cif_number(row[key]) for key in _CART_KEYS], dtype=float
-            )
-            fract = cartesian_to_fractional(cart, lattice)
-        else:
+        # A row whose coordinates are '?' or '.' is skipped; aborting the whole
+        # file over one unreadable site loses every good one with it.
+        try:
+            if all(key in row for key in _FRACT_KEYS):
+                fract = np.array(
+                    [parse_cif_number(row[key]) for key in _FRACT_KEYS], dtype=float
+                )
+                cart = fractional_to_cartesian(fract, lattice)
+            elif all(key in row for key in _CART_KEYS):
+                cart = np.array(
+                    [parse_cif_number(row[key]) for key in _CART_KEYS], dtype=float
+                )
+                fract = cartesian_to_fractional(cart, lattice)
+            else:
+                continue
+        except ValueError:
             continue
 
         occupancy = None
@@ -481,11 +517,26 @@ def parse_cif(text: str, name: str = "CIF", expand: bool = True) -> Cell:
         ],
     )
 
+    applied = 0
     if expand:
         operations = _symmetry_operations_from_loops(loops)
         if not operations:
             operations = _spacegroup_operations(space_group)
+        applied = max(1, len(operations))
         atoms = apply_symmetry(atoms, lattice, operations)
+    else:
+        # apply_symmetry folds into [0, 1) on the way; do the same here so the
+        # cell is a proper periodic cell either way.
+        atoms = [
+            CellAtom(
+                label=atom.label,
+                element=atom.element,
+                fract=wrap_fractional(atom.fract),
+                cart=fractional_to_cartesian(wrap_fractional(atom.fract), lattice),
+                occupancy=atom.occupancy,
+            )
+            for atom in atoms
+        ]
 
     return Cell(
         name=data_name or name,
@@ -495,6 +546,7 @@ def parse_cif(text: str, name: str = "CIF", expand: bool = True) -> Cell:
         atoms=tuple(atoms),
         space_group=space_group,
         source="cif",
+        symmetry_operations=applied,
     )
 
 
@@ -543,6 +595,7 @@ def make_supercell(cell: Cell, repeats: Sequence[int]) -> Cell:
         atoms=tuple(atoms),
         space_group=None if any(count > 1 for count in counts) else cell.space_group,
         source=cell.source,
+        symmetry_operations=cell.symmetry_operations,
     )
 
 
@@ -623,6 +676,7 @@ def cell_with_lattice(cell: Cell, lengths: Sequence[float], angles: Sequence[flo
         atoms=atoms,
         space_group=cell.space_group,
         source=cell.source,
+        symmetry_operations=cell.symmetry_operations,
     )
 
 
@@ -655,19 +709,37 @@ def formula(cell: Cell) -> str:
     )
 
 
+def reciprocal_lengths(lattice) -> Tuple[float, float, float]:
+    """|b_i| in Å⁻¹ for the reciprocal lattice, without the 2π factor.
+
+    ``1 / |b_i|`` is the interplanar spacing d_i.  Only for an orthogonal cell
+    does that equal the cell length a_i.
+    """
+    matrix = np.asarray(lattice, dtype=float)
+    if abs(float(np.linalg.det(matrix))) < 1e-12:
+        raise ValueError("Invalid lattice: the cell has no volume.")
+    reciprocal = np.linalg.inv(matrix).T
+    return tuple(float(np.linalg.norm(row)) for row in reciprocal)  # type: ignore[return-value]
+
+
 def kpoint_mesh_from_density(
     cell: Cell, density: float, minimum: int = 1
 ) -> Tuple[int, int, int]:
-    """Mesh where n_i ≈ density / |a_i*|⁻¹, i.e. density measured in Å⁻¹ spacing.
+    """Mesh with a k-point spacing no coarser than ``density`` (in Å⁻¹).
 
-    ``density`` is the target maximum spacing between k-points in reciprocal
-    space (2π/Å is not applied — the convention here is n_i = ceil(1 / (|a_i| * d))).
+    n_i = ceil(|b_i| / density) over the reciprocal lattice vectors (2π is not
+    applied).  Using the direct cell lengths instead would under-sample every
+    non-orthogonal cell — a hexagonal a = b, γ = 120° lattice has
+    |b_1| = 1 / (a sin 120°), i.e. 15% larger than 1/a.
     """
     density = max(1e-6, float(density))
-    mesh = []
-    for length in cell.lengths:
-        mesh.append(max(int(minimum), int(math.ceil(1.0 / (float(length) * density)))))
-    return tuple(mesh)  # type: ignore[return-value]
+    try:
+        lengths = reciprocal_lengths(cell.lattice)
+    except (ValueError, np.linalg.LinAlgError):  # pragma: no cover - degenerate cell
+        lengths = tuple(1.0 / max(1e-6, float(value)) for value in cell.lengths)
+    return tuple(  # type: ignore[return-value]
+        max(int(minimum), int(math.ceil(value / density - 1e-9))) for value in lengths
+    )
 
 
 def molecule_arrays(mol):
@@ -769,7 +841,9 @@ def cell_from_viewer_structure(structure, expand_asymmetric: bool = True) -> Cel
         raise ValueError("The CIF Viewer structure contains no atoms.")
 
     space_group = getattr(structure, "space_group", None)
-    if expand_asymmetric and getattr(structure, "is_asymmetric_unit_only", False):
+    asymmetric = bool(getattr(structure, "is_asymmetric_unit_only", False))
+    applied = 0 if asymmetric else 1
+    if expand_asymmetric and asymmetric:
         operations = _spacegroup_operations(space_group)
         if not operations:
             raise ValueError(
@@ -777,6 +851,7 @@ def cell_from_viewer_structure(structure, expand_asymmetric: bool = True) -> Cel
                 "group could not be expanded (pymatgen is required).\n"
                 "Load the .cif file directly instead."
             )
+        applied = len(operations)
         atoms = apply_symmetry(atoms, lattice, operations)
 
     return Cell(
@@ -787,6 +862,7 @@ def cell_from_viewer_structure(structure, expand_asymmetric: bool = True) -> Cel
         atoms=tuple(atoms),
         space_group=space_group,
         source="cif_viewer",
+        symmetry_operations=applied,
     )
 
 
@@ -847,6 +923,131 @@ def vacuum_gap(cell: Cell) -> float:
     spacing = abs(float(np.dot(lattice[2], normal)))
     heights = [float(np.dot(np.asarray(atom.cart, dtype=float), normal)) for atom in cell.atoms]
     return max(0.0, spacing - (max(heights) - min(heights)))
+
+
+def minimum_image_distance(fract_a, fract_b, lattice) -> float:
+    """Shortest distance between two fractional sites across periodic images."""
+    delta = np.asarray(fract_a, dtype=float) - np.asarray(fract_b, dtype=float)
+    delta -= np.round(delta)
+    offsets = (delta + _NEIGHBOUR_SHIFTS) @ np.asarray(lattice, dtype=float)
+    return float(np.sqrt(np.min(np.einsum("ij,ij->i", offsets, offsets))))
+
+
+def close_contacts(
+    cell: Cell, tolerance: float = 0.6, limit: int = 500
+) -> List[Tuple[int, int, float]]:
+    """(i, j, distance) for atom pairs closer than ``tolerance`` Angstrom.
+
+    Overlapping sites mean a doubly-expanded CIF or a disordered site written as
+    several partial atoms.  The pair count is quadratic, so a cell larger than
+    ``limit`` atoms is skipped — a supercell cannot introduce a contact that its
+    parent cell did not already have under the minimum image.
+    """
+    atoms = cell.atoms
+    count = len(atoms)
+    if count < 2 or count > int(limit):
+        return []
+
+    lattice = np.asarray(cell.lattice, dtype=float)
+    fract = np.array([atom.fract for atom in atoms], dtype=float)
+    rows, columns = np.triu_indices(count, k=1)
+    delta = fract[rows] - fract[columns]
+    delta -= np.round(delta)
+
+    best = None
+    for shift in _NEIGHBOUR_SHIFTS:
+        offsets = (delta + shift) @ lattice
+        squared = np.einsum("ij,ij->i", offsets, offsets)
+        best = squared if best is None else np.minimum(best, squared)
+
+    hits = np.nonzero(best < float(tolerance) ** 2)[0]
+    contacts = [
+        (int(rows[index]), int(columns[index]), float(math.sqrt(best[index])))
+        for index in hits
+    ]
+    contacts.sort(key=lambda item: item[2])
+    return contacts
+
+
+def partial_occupancy_sites(
+    cell: Cell, tolerance: float = 0.02
+) -> List[Tuple[str, str, float]]:
+    """(label, element, occupancy) for sites that are not fully occupied."""
+    sites = []
+    for atom in cell.atoms:
+        if atom.occupancy is None:
+            continue
+        occupancy = float(atom.occupancy)
+        if abs(occupancy - 1.0) > float(tolerance):
+            sites.append((atom.label, atom.element, occupancy))
+    return sites
+
+
+def structure_warnings(cell: Cell) -> List[str]:
+    """Problems in the structure itself, shared by every input generator.
+
+    These are faults no amount of correct DFT settings can rescue: a cell the
+    code will reject outright, or one that silently is not the structure the
+    user thinks they loaded.
+    """
+    messages: List[str] = []
+
+    lattice = np.asarray(cell.lattice, dtype=float)
+    determinant = float(np.linalg.det(lattice))
+    if abs(determinant) < 1e-8:
+        messages.append(
+            "The three lattice vectors are coplanar, so the cell has no volume."
+        )
+    elif determinant < 0.0:
+        messages.append(
+            "The lattice vectors are left-handed (the cell volume comes out negative). "
+            "Swap two of the axes — plane-wave codes reject this."
+        )
+
+    if cell.source in ("cif", "cif_viewer"):
+        symbol = str(cell.space_group or "").replace(" ", "").upper()
+        incomplete = symbol not in ("", "P1")
+        if incomplete and cell.symmetry_operations == 0:
+            messages.append(
+                f"Symmetry expansion is switched off and the CIF is space group "
+                f"{cell.space_group}, so only the asymmetric unit will be written — "
+                "that is not the full cell."
+            )
+        elif incomplete and cell.symmetry_operations == 1:
+            messages.append(
+                f"The CIF declares space group {cell.space_group} but lists no symmetry "
+                "operations, so only the asymmetric unit could be read. Use a CIF that "
+                "carries _symmetry_equiv_pos_as_xyz, or install pymatgen so the space "
+                "group can be expanded."
+            )
+
+    partial = partial_occupancy_sites(cell)
+    if partial:
+        shown = ", ".join(f"{label} ({occupancy:g})" for label, _, occupancy in partial[:4])
+        more = f", and {len(partial) - 4} more" if len(partial) > 4 else ""
+        messages.append(
+            f"{len(partial)} site(s) are partially occupied: {shown}{more}. Plane-wave "
+            "codes place whole atoms, so this cell is written as if every site were "
+            "full — build an ordered approximant instead."
+        )
+
+    contacts = close_contacts(cell)
+    if contacts:
+        first, second, distance = contacts[0]
+        messages.append(
+            f"{len(contacts)} pair(s) of atoms lie closer than 0.6 A, the closest being "
+            f"{cell.atoms[first].label} and {cell.atoms[second].label} at {distance:.3f} A. "
+            "That is usually a disordered CIF or a cell that was expanded twice."
+        )
+
+    unknown = sorted({atom.element for atom in cell.atoms if not is_element(atom.element)})
+    if unknown:
+        messages.append(
+            "Not chemical elements: " + ", ".join(unknown) +
+            " — check the CIF's _atom_site_type_symbol column."
+        )
+
+    return messages
 
 
 def looks_like_slab(cell: Cell, minimum_vacuum: float = 5.0) -> bool:

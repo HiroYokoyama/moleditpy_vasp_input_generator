@@ -3,10 +3,11 @@
 Masses are IUPAC 2021 standard atomic weights (conventional values for elements
 with no stable isotope, i.e. the longest-lived isotope's mass number).
 
-SHARED FILE.  A byte-identical copy lives in every periodic input generator
-plugin (VASP / Quantum ESPRESSO / CP2K).  Bump ``SHARED_MODULE_VERSION`` on any
-change and copy the file to the other plugins; each plugin's test suite pins the
-version it expects, so a stale copy fails loudly.
+SHARED FILE.  A byte-identical copy lives in every periodic plugin (VASP /
+Quantum ESPRESSO / CP2K input generators and the Slab Builder).  Bump
+``SHARED_MODULE_VERSION`` on any change and copy the file to the other plugins;
+each plugin's test suite pins the version it expects, so a stale copy fails
+loudly.
 """
 
 from __future__ import annotations

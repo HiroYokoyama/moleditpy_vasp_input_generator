@@ -5,7 +5,13 @@ from __future__ import annotations
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from . import potentials
-from .cell_model import Cell, kpoint_mesh_from_density, looks_like_slab, sorted_by_species
+from .cell_model import (
+    Cell,
+    kpoint_mesh_from_density,
+    looks_like_slab,
+    sorted_by_species,
+    structure_warnings,
+)
 
 TASKS = (
     "Single point (SCF)",
@@ -331,7 +337,8 @@ def build_preview(cell: Cell, settings: Optional[Dict] = None) -> str:
 def validate(cell: Cell, settings: Optional[Dict] = None, net_charge: int = 0) -> List[str]:
     """Warnings about setups that run but give wrong or wasteful answers."""
     settings = {**default_settings(), **(settings or {})}
-    messages: List[str] = []
+    # A broken structure outranks every keyword warning below it.
+    messages: List[str] = list(structure_warnings(cell))
 
     mesh = _effective_mesh(cell, settings)
     is_molecule = cell.source == "molecule"

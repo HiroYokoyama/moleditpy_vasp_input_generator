@@ -19,7 +19,7 @@ from test_cell_model import CUBIC_CIF, _FakeMol  # noqa: E402
 @pytest.mark.parametrize(
     "module,name,version",
     [
-        (cm, "periodic-cell-model", "0.5.0"),
+        (cm, "periodic-cell-model", "0.6.0"),
         (sp, "periodic-structure-panel", "0.4.0"),
         (__import__("vasp_input_generator.elements", fromlist=["x"]), "periodic-elements", "0.1.0"),
     ],
