@@ -12,40 +12,38 @@ generation in `writer.py` (POTCAR naming in `potentials.py`).
 
 ## Shared modules — do NOT edit them here
 
-Some files in `vasp_input_generator/` are **vendored copies** owned by
-[`moleditpy-periodic-shared`](https://github.com/HiroYokoyama/moleditpy-periodic-shared)
-(`../moleditpy-periodic-shared/` locally). A plugin is installed as a
-self-contained folder and cannot import from another plugin, so each carries a
-byte-identical copy:
-
-| File | `SHARED_MODULE_NAME` |
-|---|---|
-| `cell_model.py` | `periodic-cell-model` |
-| `elements.py` | `periodic-elements` |
-| `cell_preview.py` | `periodic-cell-preview` |
-| `structure_panel.py` | `periodic-structure-panel` |
-
-`.shared-versions.json` records which release each copy came from, and
-`tests/test_shared_sync.py` fails if a copy no longer matches its hash. Editing
-one of these files here is the mistake that check exists to catch.
-
-**To change shared code:**
+`cell_model.py`, `elements.py`, `cell_preview.py`, `structure_panel.py` in
+`vasp_input_generator/` are **not committed to this repo**. They are
+materialized at test/build time from the `_periodic_shared` git submodule,
+which pins one commit of
+[`moleditpy-periodic-shared`](https://github.com/HiroYokoyama/moleditpy-periodic-shared).
+A plugin is installed as a self-contained folder and cannot import from
+another plugin, so CI (and local dev) flattens the submodule's files into the
+package directory before anything runs:
 
 ```bash
-cd ../moleditpy-periodic-shared
-# edit the module and its tests, bump SHARED_MODULE_VERSION in the file
+git submodule update --init
+python scripts/materialize_shared.py
+```
+
+`tests/test_shared_materialized.py` fails loudly if this step was skipped.
+`.gitignore` excludes the materialized copies — editing them in place is
+pointless, `materialize_shared.py` overwrites them from the submodule on the
+next run.
+
+**To pick up new shared code:**
+
+```bash
+cd _periodic_shared && git pull origin main && cd ..
+git add _periodic_shared
+git commit -m "chore: pull in the latest moleditpy-periodic-shared"
+python scripts/materialize_shared.py
 python -m pytest tests/ -v
-git tag cell-model-v0.8.0 && git push origin cell-model-v0.8.0
-python scripts/sync_shared.py ../moleditpy_vasp_input_generator      # writes the copy + the manifest
 ```
 
-Then run this repo's suite and release as usual. Their tests live in that
-repository too, so they are written once rather than four times.
-
-```bash
-cd ../moleditpy-periodic-shared
-python scripts/sync_shared.py ../moleditpy_vasp_input_generator --check   # drifted? non-zero exit
-```
+Editing the shared modules themselves happens in that repository, not here —
+see its own `CLAUDE.md`. Their tests live there too, written once rather than
+four times.
 
 ## Testing
 

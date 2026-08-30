@@ -21,6 +21,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
@@ -42,6 +44,9 @@ jobs:
       - name: Clone the main MoleditPy application
         # Without this the API compatibility test skips instead of running.
         run: git clone --depth 1 https://github.com/HiroYokoyama/python_molecular_editor.git ../python_molecular_editor
+
+      - name: Materialize the shared periodic modules
+        run: python scripts/materialize_shared.py
 
       - name: Run test suite
         env:
