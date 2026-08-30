@@ -6,6 +6,10 @@ on:
       version:
         description: 'Release version (e.g. 0.1.0 — without leading v)'
         required: true
+      dry_run:
+        description: 'Dry run — build the zip but do NOT publish (true/false)'
+        required: false
+        default: 'false'
   push:
     tags:
       - 'v*.*.*'
@@ -35,7 +39,7 @@ jobs:
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
 
       - name: Create and push tag
-        if: github.event_name == 'workflow_dispatch'
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run != 'true'
         run: |
           git tag "v$VERSION"
           git push origin "v$VERSION"
@@ -61,7 +65,14 @@ jobs:
           zip -r "vasp_input_generator_${VERSION}.zip" vasp_input_generator/ \
             --exclude "*/__pycache__/*" "*/.git/*"
 
+      - name: List zip contents (dry-run verification)
+        if: github.event.inputs.dry_run == 'true'
+        run: |
+          echo "=== DRY RUN: zip contents ==="
+          unzip -l "vasp_input_generator_${VERSION}.zip"
+
       - name: Create GitHub Release
+        if: github.event.inputs.dry_run != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -71,7 +82,7 @@ jobs:
             "vasp_input_generator_$VERSION.zip"
 
       - name: Trigger moleditpy-plugins registry update
-        if: success()
+        if: success() && github.event.inputs.dry_run != 'true'
         continue-on-error: true
         env:
           REGISTRY_PAT: ${{ secrets.REGISTRY_PAT }}

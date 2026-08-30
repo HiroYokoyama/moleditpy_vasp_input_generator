@@ -60,11 +60,18 @@ and *K-points*, check the *Preview* tab, then **Save Files...** to write
 
 ## Shared modules
 
-`cell_model.py`, `elements.py` and `structure_panel.py` are shared byte-for-byte
-with the Quantum ESPRESSO and CP2K input generator plugins. Each carries its own
-`SHARED_MODULE_NAME` / `SHARED_MODULE_VERSION`, independent of `PLUGIN_VERSION`:
-change one, bump its version, copy it to the sibling plugins, and update the pin
-in each `tests/test_structure_panel.py`.
+`cell_model.py`, `elements.py`, `cell_preview.py` and `structure_panel.py` are
+owned by
+[`moleditpy-periodic-shared`](https://github.com/HiroYokoyama/moleditpy-periodic-shared)
+and vendored into each plugin via a `_periodic_shared` git submodule. They are
+**not committed directly** — `scripts/materialize_shared.py` copies them into
+the package directory at test/build time. To pick up upstream changes:
+
+```bash
+cd _periodic_shared && git pull origin main && cd ..
+git add _periodic_shared && git commit -m "chore: pull latest moleditpy-periodic-shared"
+python scripts/materialize_shared.py
+```
 
 The CIF reader, lattice construction and symmetry de-duplication are derived from
 the [MoleditPy CIF Viewer](https://github.com/HiroYokoyama/moleditpy_cif_viewer)
