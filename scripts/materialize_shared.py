@@ -20,16 +20,14 @@ HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SOURCE_DIR = os.path.join(HERE, "_periodic_shared", "periodic_shared")
 PACKAGE_DIR = os.path.join(HERE, "vasp_input_generator")
 
-#: Not every plugin takes every module — the Slab Builder has its own dialog
-#: and so has no use for the structure panel.
-ALWAYS = ("cell_model.py", "elements.py", "cell_preview.py")
-OPTIONAL = ("structure_panel.py",)
+#: This plugin's dialog imports the shared structure panel, unlike the Slab
+#: Builder which has its own. There's no reliable way to detect that from a
+#: fresh checkout (the file doesn't exist yet), so it's listed explicitly.
+FILES = ("cell_model.py", "elements.py", "cell_preview.py", "structure_panel.py")
 
 
 def files_to_copy() -> list[str]:
-    names = list(ALWAYS)
-    names += [n for n in OPTIONAL if os.path.isfile(os.path.join(PACKAGE_DIR, n))]
-    return names
+    return list(FILES)
 
 
 def main() -> int:

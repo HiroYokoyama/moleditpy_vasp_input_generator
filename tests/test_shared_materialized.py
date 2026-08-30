@@ -13,7 +13,7 @@ import pytest
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PACKAGE_DIR = os.path.join(ROOT, "vasp_input_generator")
 
-_REQUIRED = ("cell_model.py", "elements.py", "cell_preview.py")
+_REQUIRED = ("cell_model.py", "elements.py", "cell_preview.py", "structure_panel.py")
 
 
 @pytest.mark.parametrize("filename", _REQUIRED)
