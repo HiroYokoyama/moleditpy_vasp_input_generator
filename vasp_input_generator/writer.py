@@ -143,6 +143,14 @@ def frozen_cell_indices(cell: Cell, settings: Dict) -> set:
     if not selected or cell.source != "molecule":
         return set()
 
+    # Each site remembers which MoleditPy atom it came from. Counting rows
+    # instead goes wrong as soon as a ghost atom is left out of the cell:
+    # every atom after it shifts down one row and the wrong atom is frozen.
+    if cell.atoms and all(atom.source_index is not None for atom in cell.atoms):
+        return {
+            index for index, atom in enumerate(cell.atoms) if atom.source_index in selected
+        }
+
     repeats = [max(1, int(value)) for value in settings.get("supercell") or [1, 1, 1]]
     images = repeats[0] * repeats[1] * repeats[2]
     count = len(cell.atoms)
@@ -184,6 +192,10 @@ def _task_tags(settings: Dict) -> List[tuple]:
             ("POTIM", settings.get("potim", 1.0)),
             ("TEBEG", settings.get("temperature", 300.0)),
             ("TEEND", settings.get("temperature", 300.0)),
+            # Symmetrised forces keep every atom on its symmetry element, so
+            # a trajectory started from a symmetric structure could never
+            # leave it. VASP's MD guidance is ISYM = 0.
+            ("ISYM", 0),
         ]
     return tags
 
@@ -244,7 +256,9 @@ def build_incar(settings: Optional[Dict] = None, counts: Optional[Sequence] = No
     ]
     tags += _functional_tags(settings)
     tags += _smearing_tags(settings)
-    tags += _task_tags(settings)
+    task_tags = _task_tags(settings)
+    overridden = {key for key, _ in task_tags}
+    tags = [(key, value) for key, value in tags if key not in overridden] + task_tags
 
     if settings.get("ispin"):
         tags.append(("ISPIN", 2))
@@ -317,6 +331,7 @@ def build_potcar_notes(cell: Cell, settings: Optional[Dict] = None) -> str:
     elements = [element for element, _ in counts]
     recommended = bool(settings.get("recommended_potcar", True))
     names = potentials.potcar_names(elements, recommended)
+    potcar_dir = potentials.potcar_directory(settings.get("functional", FUNCTIONALS[0]))
 
     lines = [
         "# POTCAR is licensed VASP data and cannot be generated here.",
@@ -324,7 +339,7 @@ def build_potcar_notes(cell: Cell, settings: Optional[Dict] = None) -> str:
         "#",
         f"#   {'  '.join(elements)}",
         "#",
-        potentials.concat_command(names),
+        potentials.concat_command(names, potcar_dir),
     ]
     missing = potentials.unmapped_elements(elements)
     if missing and recommended:

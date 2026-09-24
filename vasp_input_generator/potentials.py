@@ -49,6 +49,17 @@ def unmapped_elements(elements: Sequence[str]) -> List[str]:
     ]
 
 
+def potcar_directory(functional: str) -> str:
+    """POTCAR set matching the functional.
+
+    GGA = CA asks for LDA, which needs the LDA potentials; pointing it at the
+    PBE set mixes two functionals in one run without any error from VASP.
+    """
+    if str(functional).upper().startswith("LDA"):
+        return "$VASP_PP_PATH/potpaw_LDA"
+    return "$VASP_PP_PATH/potpaw_PBE"
+
+
 def concat_command(names: Sequence[str], potcar_dir: str = "$VASP_PP_PATH/potpaw_PBE") -> str:
     parts = " ".join(f'"{potcar_dir}/{name}/POTCAR"' for name in names)
     return f"cat {parts} > POTCAR"

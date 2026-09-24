@@ -276,7 +276,12 @@ class VaspInputDialog(QDialog):
         self.kspacing_spin.setRange(0.001, 1.0)
         self.kspacing_spin.setDecimals(4)
         self.kspacing_spin.setSingleStep(0.005)
-        self.kspacing_spin.setSuffix(" 1/A")
+        self.kspacing_spin.setSuffix(" 1/A (no 2\u03c0)")
+        self.kspacing_spin.setToolTip(
+            "Largest distance between k-points along each reciprocal lattice vector, "
+            "without the 2\u03c0 factor: n = ceil(|b| / spacing).\n"
+            "VASP's KSPACING and pymatgen include 2\u03c0, so their 0.2 is about 0.032 here."
+        )
         form.addRow("Automatic spacing:", self.kspacing_spin)
         outer.addWidget(box)
 
