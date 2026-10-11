@@ -8,6 +8,7 @@ import os
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -31,6 +32,7 @@ from PyQt6.QtWidgets import (
 
 from . import PLUGIN_NAME, PLUGIN_VERSION
 from . import writer
+from .cell_model import molecule_charge_and_multiplicity
 from .structure_panel import StructurePanel, dropped_cif_path
 
 _FILE_ORDER = ("INCAR", "KPOINTS", "POSCAR", "POTCAR.readme")
@@ -436,7 +438,14 @@ class VaspInputDialog(QDialog):
 
         self._net_charge = self._molecule_charge()
         self.structure_panel.refresh_summary(self._cell)
-        self.preview.setPlainText(writer.build_preview(self._cell, settings))
+        try:
+            preview = writer.build_preview(self._cell, settings)
+        except ValueError as exc:
+            self.preview.setPlainText(f"! Invalid input: {exc}")
+            self._show_warnings([])
+            self.save_button.setEnabled(False)
+            return
+        self.preview.setPlainText(preview)
         self._show_warnings(writer.validate(self._cell, settings, net_charge=self._net_charge))
         self.save_button.setEnabled(True)
 
@@ -444,8 +453,6 @@ class VaspInputDialog(QDialog):
         """Net formal charge of the molecule, for the charged-cell warning."""
         if self._cell is None or self._cell.source != "molecule" or self._get_molecule is None:
             return 0
-        from .cell_model import molecule_charge_and_multiplicity
-
         try:
             return molecule_charge_and_multiplicity(self._get_molecule())[0]
         except (ValueError, AttributeError, TypeError):
@@ -461,8 +468,6 @@ class VaspInputDialog(QDialog):
         self.warning_label.setVisible(True)
 
     def copy_preview(self) -> None:
-        from PyQt6.QtWidgets import QApplication
-
         clipboard = QApplication.clipboard()
         if clipboard is not None:
             clipboard.setText(self.preview.toPlainText())
@@ -471,11 +476,15 @@ class VaspInputDialog(QDialog):
         if self._cell is None:
             QMessageBox.warning(self, "VASP Input Generator", "There is no valid structure to write.")
             return
+        try:
+            files = writer.build_all(self._cell, self.read_settings())
+        except ValueError as exc:
+            QMessageBox.warning(self, PLUGIN_NAME, str(exc))
+            return
         directory = QFileDialog.getExistingDirectory(self, "Choose an output directory")
         if not directory:
             return
 
-        files = writer.build_all(self._cell, self.read_settings())
         existing = [name for name in _FILE_ORDER if os.path.exists(os.path.join(directory, name))]
         if existing:
             answer = QMessageBox.question(

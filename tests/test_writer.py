@@ -122,7 +122,7 @@ def test_incar_defaults():
     [
         ("Relax ions", {"IBRION": "2", "ISIF": "2", "NSW": "100"}),
         ("Relax ions + cell", {"IBRION": "2", "ISIF": "3"}),
-        ("Density of states", {"LORBIT": "11", "NEDOS": "3001", "ISMEAR": "-5"}),
+        ("Density of states", {"LORBIT": "11", "NEDOS": "3001", "ISMEAR": "0"}),
         ("Band structure (non-SCF)", {"ICHARG": "11", "LORBIT": "11"}),
         ("Molecular dynamics (NVT)", {"IBRION": "0", "MDALGO": "2", "TEBEG": "300"}),
     ],
@@ -133,8 +133,8 @@ def test_incar_task_presets(task, expected):
         assert tags[key] == value
 
 
-def test_incar_dos_forces_tetrahedron_and_drops_sigma():
-    tags = incar_tags(writer.build_incar({"task": "Density of states"}))
+def test_incar_explicit_tetrahedron_drops_sigma():
+    tags = incar_tags(writer.build_incar({"task": "Density of states", "smearing": writer.SMEARING[3]}))
     assert tags["ISMEAR"] == "-5"
     assert "SIGMA" not in tags
 

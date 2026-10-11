@@ -5,8 +5,10 @@ import os
 
 from PyQt6.QtWidgets import QMessageBox
 
+from .writer import default_settings
+
 PLUGIN_NAME = "VASP Input Generator"
-PLUGIN_VERSION = "0.7.0"
+PLUGIN_VERSION = "0.8.0"
 PLUGIN_AUTHOR = "HiroYokoyama"
 PLUGIN_DESCRIPTION = (
     "Generate VASP POSCAR/INCAR/KPOINTS inputs from the current molecule "
@@ -18,6 +20,9 @@ PLUGIN_TAGS = ["DFT", "Generator"]
 PLUGIN_DEPENDENCIES = ["numpy", "pyvista", "rdkit"]
 PLUGIN_SUPPORTED_MOLEDITPY_VERSION = ">=4.0.0, <5.0.0"
 
+from . import main_dialog
+from .structure_panel import find_cif_viewer_widget
+
 SETTINGS_FILE = os.path.join(os.path.dirname(__file__), "settings.json")
 WINDOW_ID = "vasp_input_generator_dialog"
 
@@ -27,8 +32,6 @@ current_settings = None
 
 
 def get_default_settings():
-    from .writer import default_settings
-
     return default_settings()
 
 
@@ -41,8 +44,6 @@ def _open_dialog(mw):
 
     if _context is not None:
         mw = _context.get_main_window()
-
-    from .main_dialog import VaspInputDialog
 
     if _context is not None:
         existing = _context.get_window(WINDOW_ID)
@@ -75,12 +76,10 @@ def _open_dialog(mw):
         return []
 
     def _get_cif_viewer():
-        from .structure_panel import find_cif_viewer_widget
-
         return find_cif_viewer_widget(mw)
 
     _dialog_opened = True
-    dlg = VaspInputDialog(
+    dlg = main_dialog.VaspInputDialog(
         parent=mw,
         persistent_settings=current_settings,
         get_molecule=_get_molecule,

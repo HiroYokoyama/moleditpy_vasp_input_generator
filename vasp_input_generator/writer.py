@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import re
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from . import potentials
 from .cell_model import (
     Cell,
+    group_by_species,
     kpoint_mesh_from_density,
     looks_like_slab,
     sorted_by_species,
@@ -88,7 +90,7 @@ def build_poscar(cell: Cell, settings: Optional[Dict] = None) -> str:
 
     lines: List[str] = []
     title = str(settings.get("title") or cell.name).strip() or "POSCAR"
-    lines.append(title.replace("\n", " "))
+    lines.append(" ".join(title.splitlines()))
     lines.append("   1.00000000000000")
     for vector in cell.lattice:
         lines.append(
@@ -108,7 +110,7 @@ def build_poscar(cell: Cell, settings: Optional[Dict] = None) -> str:
     # frozen_indices refer to the *original* cell ordering, so map through the
     # species sort rather than using the emitted row number.
     order = []
-    for _, indices in _species_indices(cell):
+    for _, indices in group_by_species(cell):
         order.extend(indices)
 
     for row, atom in enumerate(atoms):
@@ -121,12 +123,6 @@ def build_poscar(cell: Cell, settings: Optional[Dict] = None) -> str:
         lines.append(line)
 
     return "\n".join(lines) + "\n"
-
-
-def _species_indices(cell: Cell):
-    from .cell_model import group_by_species
-
-    return group_by_species(cell)
 
 
 def frozen_cell_indices(cell: Cell, settings: Dict) -> set:
@@ -225,7 +221,6 @@ def _vdw_tags(settings: Dict) -> List[tuple]:
 
 
 def _smearing_tags(settings: Dict) -> List[tuple]:
-    task = settings.get("task")
     label = settings.get("smearing", SMEARING[0])
     ismear = {
         "Gaussian (ISMEAR=0)": 0,
@@ -233,8 +228,6 @@ def _smearing_tags(settings: Dict) -> List[tuple]:
         "Fermi (ISMEAR=-1)": -1,
         "Tetrahedron + Blochl (ISMEAR=-5)": -5,
     }.get(label, 0)
-    if task == "Density of states" and ismear >= 0:
-        ismear = -5  # tetrahedron gives a far smoother DOS
     tags = [("ISMEAR", ismear)]
     if ismear >= -1:
         tags.append(("SIGMA", settings.get("sigma", 0.05)))
@@ -245,7 +238,7 @@ def build_incar(settings: Optional[Dict] = None, counts: Optional[Sequence] = No
     settings = {**default_settings(), **(settings or {})}
 
     tags: List[tuple] = [
-        ("SYSTEM", str(settings.get("title") or "MoleditPy").replace("\n", " ")),
+        ("SYSTEM", _system_title(settings.get("title") or "MoleditPy")),
         ("PREC", settings.get("prec", "Accurate")),
         ("ENCUT", settings.get("encut", 520.0)),
         ("EDIFF", settings.get("ediff", 1e-6)),
@@ -272,9 +265,10 @@ def build_incar(settings: Optional[Dict] = None, counts: Optional[Sequence] = No
     if ncore > 1:
         tags.append(("NCORE", ncore))
 
-    lines = [f"{key:<8}= {_format_value(value)}" for key, value in tags]
-
     extra = str(settings.get("extra_incar") or "").strip()
+    extra_tags = _extra_tags(extra)
+    # Emit one definition per tag: an extra setting replaces its generated one.
+    lines = [f"{key:<8}= {_format_value(value)}" for key, value in tags if key not in extra_tags]
     if extra:
         lines.append("")
         lines.append("! --- additional tags ---")
@@ -288,9 +282,81 @@ def _format_value(value) -> str:
         return ".TRUE." if value else ".FALSE."
     if isinstance(value, float):
         if value != 0 and (abs(value) < 1e-3 or abs(value) >= 1e5):
-            return f"{value:.1E}"
-        return f"{value:g}"
+            mantissa, exponent = f"{value:.14E}".split("E")
+            mantissa = mantissa.rstrip("0").rstrip(".")
+            if "." not in mantissa:
+                mantissa += ".0"
+            return f"{mantissa}E{exponent}"
+        return f"{value:.15g}"
     return str(value)
+
+
+def _system_title(title) -> str:
+    # INCAR delimiters must not turn a display title into other assignments.
+    return re.sub(r'[;#!="{}\\]', " ", " ".join(str(title).splitlines()))
+
+
+def _extra_tags(text: str) -> Dict[str, str]:
+    """Read outer INCAR assignments without changing free-form nested blocks.
+
+    Semicolons, comments, continuations and quoted multiline values follow the
+    documented INCAR syntax. Nested assignments must not override global tags.
+    """
+    statements = []
+    buffer = []
+    quoted = False
+    comment = False
+    depth = 0
+    for char in text + "\n":
+        if comment:
+            if char != "\n":
+                continue
+            comment = False
+        if char == '"':
+            quoted = not quoted
+        if not quoted:
+            if char in "#!":
+                comment = True
+                continue
+            if char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth < 0:
+                    raise ValueError("Additional INCAR tags have an unmatched closing brace.")
+            if char == "\n" and buffer and buffer[-1] == "\\":
+                buffer[-1] = " "
+                continue
+            if char in ";\n" and depth == 0:
+                statements.append("".join(buffer).strip())
+                buffer.clear()
+                continue
+        buffer.append(char)
+    if quoted or depth != 0:
+        raise ValueError("Additional INCAR tags have an unclosed quote or brace.")
+    tags = {}
+    for statement in statements:
+        match = re.fullmatch(r"([A-Za-z][A-Za-z0-9_/]*)\s*=\s*(.+)", statement, re.DOTALL)
+        if match:
+            key, value = match.groups()
+            key = key.upper()
+            if key in tags:
+                raise ValueError(f"Additional INCAR tags define {key} more than once.")
+            tags[key] = value.strip()
+    return tags
+
+
+def _effective_ismear(settings: Dict) -> int:
+    value = _extra_tags(str(settings.get("extra_incar") or "")).get("ISMEAR")
+    return int(value) if value is not None else _smearing_tags(settings)[0][1]
+
+
+def input_errors(cell: Cell, settings: Dict) -> List[str]:
+    ismear = _effective_ismear(settings)
+    mesh = _effective_mesh(cell, settings)
+    if ismear in (-4, -5, -14, -15) and mesh[0] * mesh[1] * mesh[2] < 4:
+        return [f"The tetrahedron method (ISMEAR={ismear}) requires at least 4 k-points; choose a larger mesh or Gaussian smearing."]
+    return []
 
 
 # --------------------------------------------------------------------------
@@ -353,6 +419,9 @@ def build_potcar_notes(cell: Cell, settings: Optional[Dict] = None) -> str:
 
 def build_all(cell: Cell, settings: Optional[Dict] = None) -> Dict[str, str]:
     settings = {**default_settings(), **(settings or {})}
+    errors = input_errors(cell, settings)
+    if errors:
+        raise ValueError("\n".join(errors))
     _, counts = sorted_by_species(cell)
     return {
         "POSCAR": build_poscar(cell, settings),
@@ -396,11 +465,17 @@ def validate(cell: Cell, settings: Optional[Dict] = None, net_charge: int = 0) -
             "k-mesh — Gamma-only is enough and much cheaper."
         )
 
-    ismear = _smearing_tags(settings)[0][1]
-    if ismear == -5 and (mesh[0] * mesh[1] * mesh[2]) < 4:
+    ismear = _effective_ismear(settings)
+    messages.extend(input_errors(cell, settings))
+    if ismear in (-4, -5, -14, -15) and (
+        settings.get("kpoint_mode") == "Monkhorst-Pack mesh"
+        or (
+            settings.get("kpoint_mode") == "Gamma-centred mesh"
+            and any(float(value) != 0 for value in settings.get("kshift", [0, 0, 0]))
+        )
+    ):
         messages.append(
-            "The tetrahedron method (ISMEAR=-5) needs a real k-mesh; it is unreliable "
-            "with fewer than about 4 k-points."
+            "Use an unshifted Gamma-centred k-mesh with the tetrahedron method."
         )
     if ismear == 1 and float(settings.get("sigma", 0.05)) > 0.2:
         messages.append(
