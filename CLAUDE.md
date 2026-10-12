@@ -66,3 +66,12 @@ this plugin's own code. The shared modules are covered in their own repository.
 - Only hard dependency beyond the host is numpy. pymatgen is optional and
   imported inside a `try` (space-group expansion for CIFs with no symop loop).
 - Files are written with `newline="\n"`.
+
+## Shared release version and plugin releases
+
+The shared repository uses one version for all modules, starting at `1.0.0`,
+with tags such as `v1.0.0`. Advance the submodule to a verified release commit;
+do not create module-specific tags or change materialized version declarations.
+For shared fixes, bump this plugin's minor version, run the plugin suite,
+commit with `Assisted-by: GPT-6 Sol`, push main and wait for CI before pushing
+this plugin's `v<version>` tag. Shared tests remain in the canonical repository.

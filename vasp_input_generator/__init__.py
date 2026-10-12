@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import QMessageBox
 from .writer import default_settings
 
 PLUGIN_NAME = "VASP Input Generator"
-PLUGIN_VERSION = "0.8.0"
+PLUGIN_VERSION = "0.9.0"
 PLUGIN_AUTHOR = "HiroYokoyama"
 PLUGIN_DESCRIPTION = (
     "Generate VASP POSCAR/INCAR/KPOINTS inputs from the current molecule "
