@@ -4,7 +4,7 @@ import ast
 from pathlib import Path
 
 import pytest
-from PyQt6.QtWidgets import QFileDialog, QMessageBox
+from PySide6.QtWidgets import QFileDialog, QMessageBox
 
 from vasp_input_generator import cell_model, writer
 from vasp_input_generator.main_dialog import VaspInputDialog

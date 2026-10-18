@@ -11,7 +11,7 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from PyQt6.QtWidgets import QWidget  # noqa: E402
+from PySide6.QtWidgets import QWidget  # noqa: E402
 
 import vasp_input_generator as plugin  # noqa: E402
 
