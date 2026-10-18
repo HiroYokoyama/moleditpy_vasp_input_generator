@@ -73,7 +73,8 @@ def test_plugin_metadata():
 
 
 def test_plugin_version_is_semver():
-    assert re.fullmatch(r"\d+\.\d+\.\d+", plugin.PLUGIN_VERSION)
+    from packaging.version import Version
+    assert Version(plugin.PLUGIN_VERSION).public == plugin.PLUGIN_VERSION
 
 
 def test_supported_version_range():
