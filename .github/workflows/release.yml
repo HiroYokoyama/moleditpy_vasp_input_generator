@@ -61,7 +61,7 @@ jobs:
 
       - name: Build release package
         run: |
-          cp README.md LICENSE vasp_input_generator/
+          cp README.md LICENSE COPYING LICENSING.md vasp_input_generator/
           zip -r "vasp_input_generator_${VERSION}.zip" vasp_input_generator/ \
             --exclude "*/__pycache__/*" "*/.git/*"
 

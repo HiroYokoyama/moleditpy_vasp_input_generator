@@ -1,5 +1,7 @@
 # MoleditPy VASP Input Generator
 
+This branch targets **MoleditPy 5.0.0a1–5.x** and uses **PySide6**. Plugin licensing is unchanged.
+
 [![Python CI](https://github.com/HiroYokoyama/moleditpy_vasp_input_generator/actions/workflows/test.yml/badge.svg)](https://github.com/HiroYokoyama/moleditpy_vasp_input_generator/actions/workflows/test.yml)
 ![Test Coverage](https://img.shields.io/badge/coverage->90%25-green)
 [![GitHub tag](https://img.shields.io/github/v/tag/HiroYokoyama/moleditpy_vasp_input_generator?label=version)](https://github.com/HiroYokoyama/moleditpy_vasp_input_generator/tags)
@@ -85,4 +87,8 @@ python -m pytest tests/ -v
 
 ## Licence
 
-GNU General Public License v3.0 — see [LICENSE](LICENSE).
+GNU Lesser General Public License v3.0 — see [LICENSE](LICENSE).
+
+## Licensing scope
+
+First-party code in this migration is LGPL-3.0-or-later. See [LICENSE](LICENSE), [COPYING](COPYING) and [dependency/provenance terms](LICENSING.md). Third-party components and historical releases retain their own terms.

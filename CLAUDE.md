@@ -51,7 +51,7 @@ four times.
 python -m pytest tests/ -v
 ```
 
-Headless; PyQt6 and RDKit are stubbed where needed. `tests/test_api.py` runs
+Headless; PySide6 and RDKit are stubbed where needed. `tests/test_api.py` runs
 `plugin_api_checker.py` against the main app when
 `../python_molecular_editor/` exists, and skips otherwise.
 

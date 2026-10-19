@@ -37,4 +37,4 @@ def test_materialized_source_matches_pinned_release(filename):
     canonical = source.read_text(encoding="utf-8")
     assert destination.read_text(encoding="utf-8") == canonical
     match = re.search(r'^SHARED_MODULE_VERSION = "([^"]+)"', canonical, re.MULTILINE)
-    assert match is not None and match.group(1) == version == "1.0.0"
+    assert match is not None and match.group(1) == version == "1.1.0"

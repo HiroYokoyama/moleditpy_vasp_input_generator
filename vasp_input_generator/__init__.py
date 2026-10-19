@@ -3,12 +3,12 @@
 import logging
 import os
 
-from PyQt6.QtWidgets import QMessageBox
+from PySide6.QtWidgets import QMessageBox
 
 from .writer import default_settings
 
 PLUGIN_NAME = "VASP Input Generator"
-PLUGIN_VERSION = "0.9.0"
+PLUGIN_VERSION = "0.10.0"
 PLUGIN_AUTHOR = "HiroYokoyama"
 PLUGIN_DESCRIPTION = (
     "Generate VASP POSCAR/INCAR/KPOINTS inputs from the current molecule "
@@ -18,7 +18,7 @@ PLUGIN_DESCRIPTION = (
 PLUGIN_CATEGORY = "Export"
 PLUGIN_TAGS = ["DFT", "Generator"]
 PLUGIN_DEPENDENCIES = ["numpy", "pyvista", "rdkit"]
-PLUGIN_SUPPORTED_MOLEDITPY_VERSION = ">=4.0.0, <5.0.0"
+PLUGIN_SUPPORTED_MOLEDITPY_VERSION = ">=5.0.0, <6.0.0"
 
 from . import main_dialog
 from .structure_panel import find_cif_viewer_widget

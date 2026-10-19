@@ -92,7 +92,7 @@ def test_dialog_reports_a_missing_molecule(qapp):
 
 
 def test_dialog_save_writes_every_file(dialog, tmp_path, monkeypatch):
-    from PyQt6.QtWidgets import QFileDialog, QMessageBox
+    from PySide6.QtWidgets import QFileDialog, QMessageBox
 
     monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *a, **k: str(tmp_path))
     monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: None)
@@ -104,7 +104,7 @@ def test_dialog_save_writes_every_file(dialog, tmp_path, monkeypatch):
 
 
 def test_dialog_save_is_cancellable(dialog, tmp_path, monkeypatch):
-    from PyQt6.QtWidgets import QFileDialog
+    from PySide6.QtWidgets import QFileDialog
 
     monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *a, **k: "")
     dialog.save_files()
@@ -112,7 +112,7 @@ def test_dialog_save_is_cancellable(dialog, tmp_path, monkeypatch):
 
 
 def test_dialog_save_asks_before_overwriting(dialog, tmp_path, monkeypatch):
-    from PyQt6.QtWidgets import QFileDialog, QMessageBox
+    from PySide6.QtWidgets import QFileDialog, QMessageBox
 
     (tmp_path / "INCAR").write_text("keep me", encoding="utf-8")
     monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *a, **k: str(tmp_path))
@@ -122,7 +122,7 @@ def test_dialog_save_asks_before_overwriting(dialog, tmp_path, monkeypatch):
 
 
 def test_dialog_save_without_structure_warns(qapp, monkeypatch):
-    from PyQt6.QtWidgets import QMessageBox
+    from PySide6.QtWidgets import QMessageBox
 
     seen = []
     monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: seen.append(a))
