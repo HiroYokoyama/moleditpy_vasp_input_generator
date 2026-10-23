@@ -1,0 +1,19 @@
+{
+  "source": "vasp_input_generator/__init__.py",
+  "title": "VASP Input Generator",
+  "package": "vasp_input_generator",
+  "archive": "vasp_input_generator_{version}.zip",
+  "assets": [
+    "vasp_input_generator_{version}.zip"
+  ],
+  "include": [
+    "README.md",
+    "LICENSE",
+    "COPYING",
+    "LICENSING.md"
+  ],
+  "exclude": [
+    "*/__pycache__/*",
+    "*/.git/*"
+  ]
+}

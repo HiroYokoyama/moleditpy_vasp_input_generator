@@ -1,52 +1,40 @@
-#!/usr/bin/env python3
-"""Copy the shared periodic modules from the ``_periodic_shared`` submodule
-into the plugin package, so the package is self-contained for tests and for
-the release zip.
+"""Materialize the pinned periodic submodule using repository configuration."""
 
-The submodule pins one commit of moleditpy-periodic-shared; this script does
-not edit or version anything itself, it only flattens what that commit holds.
-Run it after ``git submodule update --init`` and again whenever the submodule
-pointer moves:
+import json
+from pathlib import Path
 
-    python scripts/materialize_shared.py
-"""
-
-from __future__ import annotations
-
-import os
-import sys
-
-HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SOURCE_DIR = os.path.join(HERE, "_periodic_shared", "periodic_shared")
-PACKAGE_DIR = os.path.join(HERE, "vasp_input_generator")
-
-#: This plugin's dialog imports the shared structure panel, unlike the Slab
-#: Builder which has its own. There's no reliable way to detect that from a
-#: fresh checkout (the file doesn't exist yet), so it's listed explicitly.
-FILES = ("cell_model.py", "elements.py", "cell_preview.py", "structure_panel.py")
+ROOT = Path(__file__).resolve().parents[1]
 
 
-def files_to_copy() -> list[str]:
-    return list(FILES)
-
-
-def main() -> int:
-    if not os.path.isdir(SOURCE_DIR):
-        print(
-            "_periodic_shared is empty — run `git submodule update --init` first",
-            file=sys.stderr,
+def materialize(root):
+    config = json.loads(
+        (root / "scripts/materialize-config.json").read_text(encoding="utf-8")
+    )
+    source = root / "_periodic_shared/periodic_shared"
+    if not source.is_dir():
+        raise FileNotFoundError(
+            "Run git submodule update --init before materializing shared modules."
         )
-        return 1
+    package = (root / config["package"]).resolve()
+    package.relative_to(root.resolve())
+    if not package.is_dir():
+        raise FileNotFoundError(package)
+    for name in config["files"]:
+        if Path(name).name != name or not name.endswith(".py"):
+            raise ValueError(f"Invalid shared module filename: {name}")
+        (package / name).write_bytes((source / name).read_bytes())
+        print(name)
 
-    for filename in files_to_copy():
-        source = os.path.join(SOURCE_DIR, filename)
-        destination = os.path.join(PACKAGE_DIR, filename)
-        with open(source, "rb") as handle:
-            data = handle.read()
-        with open(destination, "wb") as handle:
-            handle.write(data)
-        print(f"  {filename}")
 
+def files_to_copy():
+    config = json.loads(
+        (ROOT / "scripts/materialize-config.json").read_text(encoding="utf-8")
+    )
+    return list(config["files"])
+
+
+def main():
+    materialize(ROOT)
     return 0
 
 
