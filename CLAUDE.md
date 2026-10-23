@@ -75,3 +75,7 @@ do not create module-specific tags or change materialized version declarations.
 For shared fixes, bump this plugin's minor version, run the plugin suite,
 commit with `Assisted-by: GPT-6 Sol`, push main and wait for CI before pushing
 this plugin's `v<version>` tag. Shared tests remain in the canonical repository.
+
+## Copied maintenance scripts
+
+See [scripts/COMMON_TOOLS.md](scripts/COMMON_TOOLS.md) for canonical ownership, pinned versions and update instructions. Common script unit tests stay in the canonical repository; retain this repository's own integration checks.

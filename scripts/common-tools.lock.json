@@ -1,0 +1,15 @@
+{
+  "repository": "HiroYokoyama/moleditpy-common-tools",
+  "version": "1.0.0",
+  "commit": "48916a03f1f1431123e924a7809497425fec778b",
+  "files": {
+    "scripts/materialize_shared.py": {
+      "source": "scripts/materialize_shared.py",
+      "sha256_lf": "bb3058a32da7f2a15b1e46980650d96e917f5e3a6efb7a8f04b5de45b2ce8d73"
+    },
+    "scripts/release_common.py": {
+      "source": "scripts/release_common.py",
+      "sha256_lf": "cc9718a26ca648857a61a5efd54959954a21127bf3ca0648d52c5f0f81cb9744"
+    }
+  }
+}
