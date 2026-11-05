@@ -99,6 +99,9 @@ class _FakeMime:
         return self._urls
 
 
+from PySide6.QtCore import Qt  # noqa: E402
+
+
 class _FakeDropEvent:
     def __init__(self, mime):
         self._mime = mime
@@ -108,7 +111,13 @@ class _FakeDropEvent:
     def mimeData(self):
         return self._mime
 
-    def acceptProposedAction(self):
+    def possibleActions(self):
+        return Qt.DropAction.CopyAction | Qt.DropAction.MoveAction
+
+    def setDropAction(self, action):
+        self.action = action
+
+    def accept(self):
         self.accepted = True
 
     def ignore(self):
