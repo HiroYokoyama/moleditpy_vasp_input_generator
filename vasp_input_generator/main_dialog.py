@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+from typing import Optional
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
@@ -31,7 +32,7 @@ from PySide6.QtWidgets import (
 )
 
 from . import PLUGIN_NAME, PLUGIN_VERSION
-from . import writer
+from . import cluster_link, writer
 from .cell_model import molecule_charge_and_multiplicity
 from .structure_panel import accept_drop_as_copy, StructurePanel, dropped_cif_path
 
@@ -39,6 +40,9 @@ _FILE_ORDER = ("INCAR", "KPOINTS", "POSCAR", "POTCAR.readme")
 
 
 class VaspInputDialog(QDialog):
+    _saved_directory: Optional[str] = None  # the last directory written
+    _saved_files: Optional[dict] = None  # what was written there
+
     def __init__(
         self,
         parent=None,
@@ -95,9 +99,19 @@ class VaspInputDialog(QDialog):
         buttons = QDialogButtonBox()
         self.save_button = buttons.addButton("Save Files...", QDialogButtonBox.ButtonRole.AcceptRole)
         self.copy_button = buttons.addButton("Copy Preview", QDialogButtonBox.ButtonRole.ActionRole)
+        self.submit_button = buttons.addButton(
+            "Submit to Cluster...", QDialogButtonBox.ButtonRole.ActionRole
+        )
+        self.submit_button.setToolTip(
+            "Save the files and hand them to the Job Manager plugin, which uploads "
+            "and submits them to a remote cluster."
+        )
+        # Only meaningful with Job Manager installed; otherwise it is not shown.
+        self.submit_button.setVisible(cluster_link.is_available(self.parent()))
         buttons.addButton(QDialogButtonBox.StandardButton.Close)
         self.save_button.clicked.connect(self.save_files)
         self.copy_button.clicked.connect(self.copy_preview)
+        self.submit_button.clicked.connect(self.submit_to_cluster)
         buttons.rejected.connect(self.close)
         layout.addWidget(buttons)
 
@@ -473,17 +487,53 @@ class VaspInputDialog(QDialog):
             clipboard.setText(self.preview.toPlainText())
 
     def save_files(self) -> None:
+        self._write_files(announce=True)
+
+    def _saved_is_current(self) -> bool:
+        """True when the last written files still hold what the dialog would write."""
+        if not self._saved_directory or self._cell is None:
+            return False
+        if not all(os.path.isfile(os.path.join(self._saved_directory, n)) for n in _FILE_ORDER):
+            return False
+        try:
+            return writer.build_all(self._cell, self.read_settings()) == self._saved_files
+        except ValueError:
+            return False
+
+    def submit_to_cluster(self) -> None:
+        """Hand the written files to Job Manager. Writes them first when needed."""
+        if self._saved_is_current():
+            directory = self._saved_directory
+        else:
+            directory = self._write_files(announce=False)
+        if directory is None:
+            return  # nothing valid to write, or the save was cancelled
+        # VASP reads its inputs from the working directory; INCAR goes first.
+        paths = [os.path.join(directory, name) for name in _FILE_ORDER]
+        name = os.path.basename(os.path.normpath(directory))
+        if not cluster_link.submit_to_cluster(self.parent(), paths, name=name):
+            QMessageBox.warning(
+                self,
+                PLUGIN_NAME,
+                "Job Manager could not accept the files. Check that the plugin is "
+                "installed and enabled.",
+            )
+            return
+        self.close()
+
+    def _write_files(self, announce: bool) -> Optional[str]:
+        """Ask for a directory and write the inputs. The directory, or None if nothing was written."""
         if self._cell is None:
             QMessageBox.warning(self, "VASP Input Generator", "There is no valid structure to write.")
-            return
+            return None
         try:
             files = writer.build_all(self._cell, self.read_settings())
         except ValueError as exc:
             QMessageBox.warning(self, PLUGIN_NAME, str(exc))
-            return
+            return None
         directory = QFileDialog.getExistingDirectory(self, "Choose an output directory")
         if not directory:
-            return
+            return None
 
         existing = [name for name in _FILE_ORDER if os.path.exists(os.path.join(directory, name))]
         if existing:
@@ -493,7 +543,7 @@ class VaspInputDialog(QDialog):
                 "These files already exist and will be overwritten:\n  " + "\n  ".join(existing),
             )
             if answer != QMessageBox.StandardButton.Yes:
-                return
+                return None
 
         try:
             for name in _FILE_ORDER:
@@ -501,8 +551,12 @@ class VaspInputDialog(QDialog):
                     handle.write(files[name])
         except OSError as exc:
             QMessageBox.critical(self, "VASP Input Generator", f"Could not write the files:\n{exc}")
-            return
+            return None
 
-        QMessageBox.information(
-            self, "VASP Input Generator", f"Wrote {', '.join(_FILE_ORDER)} to\n{directory}"
-        )
+        self._saved_directory = directory
+        self._saved_files = dict(files)
+        if announce:
+            QMessageBox.information(
+                self, "VASP Input Generator", f"Wrote {', '.join(_FILE_ORDER)} to\n{directory}"
+            )
+        return directory
